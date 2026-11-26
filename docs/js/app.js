@@ -1,0 +1,240 @@
+import { createPager, normalizeText } from "./pagination.js";
+import { bindPageTurn } from "./page-turn.js";
+import { createBookStorage } from "./storage.js";
+
+const byId = (id) => document.getElementById(id);
+const entry = byId("entry");
+const reader = byId("reader");
+const field = byId("manuscript");
+const resume = byId("resume");
+const stage = byId("paper");
+const title = byId("book-title");
+const measure = byId("measure");
+const pageText = byId("page-text");
+const previewText = byId("preview-text");
+const smaller = byId("smaller");
+const larger = byId("larger");
+const previous = byId("previous");
+const next = byId("next");
+const progress = byId("progress");
+const percentage = byId("position-label");
+const readerNote = byId("reader-note");
+const storage = createBookStorage(globalThis.indexedDB);
+const fontSizes = [16, 18, 21, 24, 28];
+const defaultPosition = { offset: 0, fontIndex: 1 };
+const percentFormat = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 });
+
+let saved;
+let session;
+let layoutFrame = 0;
+let cancelWarmup = () => {};
+
+const turn = bindPageTurn(stage, {
+  front: byId("front"),
+  reverse: byId("reverse"),
+  shadow: byId("fold-shadow"),
+  preview(direction) {
+    if (!session?.page) return null;
+    const page = session.pager.adjacent(session.page, direction);
+    if (page) previewText.textContent = session.book.text.slice(page.start, page.end);
+    return page;
+  },
+  commit: showPage,
+});
+
+function storageFailed() {
+  byId("entry-note").textContent = "这台设备暂时无法保存文字和进度。";
+  readerNote.textContent = "本机保存失败。保留当前页面可以继续阅读。";
+  readerNote.hidden = false;
+}
+
+function warmNextPage() {
+  cancelWarmup();
+  const { pager, page } = session;
+  const warm = () => pager.adjacent(page, 1);
+  if ("requestIdleCallback" in window) {
+    const handle = requestIdleCallback(warm, { timeout: 140 });
+    cancelWarmup = () => cancelIdleCallback(handle);
+  } else {
+    const handle = setTimeout(warm, 30);
+    cancelWarmup = () => clearTimeout(handle);
+  }
+}
+
+function displayProgress(tenths) {
+  const label = tenths === 1000 ? "末页" : percentFormat.format(tenths / 1000);
+  percentage.textContent = label;
+  progress.style.setProperty("--progress-fill", (tenths / 10) + "%");
+  progress.setAttribute("aria-valuetext", label);
+}
+
+function showPage(page) {
+  const { book, fontIndex, persist } = session;
+  session.page = page;
+  pageText.textContent = book.text.slice(page.start, page.end);
+  const last = page.end === book.text.length;
+  const tenths = last ? 1000 : Math.min(999, Math.floor(1000 * page.start / book.text.length));
+  previous.disabled = page.start === 0;
+  next.disabled = last;
+  progress.disabled = page.start === 0 && last;
+  progress.value = String(tenths);
+  displayProgress(tenths);
+  stage.setAttribute("aria-busy", "false");
+  if (persist) {
+    const position = { offset: page.start, fontIndex };
+    saved = { book, position };
+    storage.savePosition(book.id, position).catch(storageFailed);
+  }
+  warmNextPage();
+}
+
+function fitsOnPage(text, start, end) {
+  measure.textContent = text.slice(start, end);
+  return measure.scrollHeight <= measure.clientHeight;
+}
+
+function reflow(anchor, force = false) {
+  if (!session) return;
+  const width = measure.clientWidth;
+  const height = measure.clientHeight;
+  if (!width || !height) return;
+  const layout = [width, height, session.fontIndex].join("/");
+  if (session.layout === layout && !force) return;
+  cancelWarmup();
+  turn.clear();
+  const { text } = session.book;
+  session.layout = layout;
+  session.pager = createPager(text, (start, end) => fitsOnPage(text, start, end));
+  showPage(session.pager.at(anchor));
+}
+
+function scheduleReflow() {
+  if (layoutFrame) return;
+  layoutFrame = requestAnimationFrame(() => {
+    layoutFrame = 0;
+    if (session) reflow(session.page?.start ?? session.initialOffset);
+  });
+}
+
+function updateFont() {
+  reader.style.setProperty("--reading-size", fontSizes[session.fontIndex] + "px");
+  smaller.disabled = session.fontIndex === 0;
+  larger.disabled = session.fontIndex === fontSizes.length - 1;
+}
+
+function openReader({ book, position = defaultPosition }, persist = true) {
+  session = {
+    book, persist,
+    initialOffset: position.offset,
+    fontIndex: fontSizes[position.fontIndex] ? position.fontIndex : defaultPosition.fontIndex,
+  };
+  title.textContent = book.text.slice(0, 300).trimStart().split("\n", 1)[0] || "长文";
+  entry.hidden = true;
+  reader.hidden = false;
+  stage.setAttribute("aria-busy", "true");
+  updateFont();
+  scheduleReflow();
+  stage.focus({ preventScroll: true });
+  window.scrollTo(0, 0);
+}
+
+function openEditor() {
+  turn.clear();
+  cancelWarmup();
+  session = undefined;
+  pageText.textContent = "";
+  previewText.textContent = "";
+  measure.textContent = "";
+  resume.hidden = !saved;
+  reader.hidden = true;
+  entry.hidden = false;
+  field.focus({ preventScroll: true });
+}
+
+function changeFont(direction) {
+  if (!session?.page) return;
+  const fontIndex = session.fontIndex + direction;
+  if (!fontSizes[fontIndex]) return;
+  session.fontIndex = fontIndex;
+  updateFont();
+  reflow(session.page.start);
+}
+
+function seek(tenths) {
+  if (!session?.page) return;
+  const offset = Math.floor(session.book.text.length * tenths / 1000);
+  reflow(offset, true);
+}
+
+field.addEventListener("input", () => field.setCustomValidity(""));
+field.addEventListener("paste", (event) => {
+  const text = event.clipboardData?.getData("text/plain");
+  if (!text || text.length < 32_768) return;
+  event.preventDefault();
+  // Large clipboard payloads can stall the browser's default edit command.
+  field.setRangeText(normalizeText(text), field.selectionStart, field.selectionEnd, "end");
+  field.setCustomValidity("");
+});
+byId("edit").addEventListener("submit", (event) => {
+  event.preventDefault();
+  const text = normalizeText(field.value);
+  if (!/\S/.test(text)) {
+    field.setCustomValidity("请粘贴想读的文字。");
+    field.reportValidity();
+    return;
+  }
+  const id = globalThis.crypto?.randomUUID?.() ?? Date.now() + "-" + Math.random();
+  const book = { id, text };
+  saved = { book, position: defaultPosition };
+  storage.saveBook(book, defaultPosition).catch(storageFailed);
+  field.value = "";
+  openReader(saved);
+});
+
+resume.addEventListener("click", () => { if (saved) openReader(saved); });
+byId("back").addEventListener("click", openEditor);
+smaller.addEventListener("click", () => changeFont(-1));
+larger.addEventListener("click", () => changeFont(1));
+previous.addEventListener("click", () => turn.shift(-1));
+next.addEventListener("click", () => turn.shift(1));
+progress.addEventListener("input", () => displayProgress(Number(progress.value)));
+progress.addEventListener("change", () => seek(Number(progress.value)));
+byId("sample").addEventListener("click", () => {
+  openReader({ book: { id: "sample", text: sample } }, false);
+});
+
+document.addEventListener("keydown", (event) => {
+  if (reader.hidden || event.target === progress || event.altKey || event.ctrlKey || event.metaKey) return;
+  switch (event.key) {
+    case "ArrowLeft": turn.shift(-1); break;
+    case "ArrowRight": turn.shift(1); break;
+    case "Home": seek(0); break;
+    case "End": seek(1000); break;
+    default: return;
+  }
+  event.preventDefault();
+});
+
+const layoutObserver = new ResizeObserver(scheduleReflow);
+layoutObserver.observe(stage);
+
+storage.load().then((record) => {
+  if (!record || saved) return;
+  saved = record;
+  resume.hidden = false;
+  if (!session && !field.value) openReader(saved);
+}).catch(storageFailed);
+
+const sample = [
+  "窗边的下午",
+  "停雨的时候，图书馆的窗台先亮了起来。我把垫在窗缝里的纸抽出来，风便从院子那棵树底下一路吹进来。对面有人把书合上，隔着一张长桌，我听见了纸页落下的声音。",
+  "我常在靠窗的位置读书。那里的椅子比别处矮一点，桌沿也被磨得发白。坐下时只要把左边的手肘搭在桌边，眼前的书就有一点自然的斜度，像是有人替我扶着。",
+  "管理员下午会来一趟，把没有归还到书架上的书叠齐。他不急着问是谁借的，只把夹在里面的借书单压平。借书单上有几行很浅的字迹，名字已经看不清了，日期却还在。",
+  "有时夹在书里的东西比书更容易记住。一片槐树叶，一张已经褪色的车票，还有人写到一半的购物单。购物单上列了葱、面包和一只新的灯泡，最后一行是空着的。",
+  "这天我读的是一本关于潮汐的书。它写到有一整年，作者住在一间能看见码头的房子里。每天涨潮前半个钟头，系船的绳索先松下来。等到绳子重新拉紧，他才记下那天的水位。",
+  "我第一次读到这里时，总想知道第二天到底出了什么事。再读一遍，倒是留意到他每天坐的是同一把椅子。潮水从不会在同一个时刻到来，他却有大把的时间坐在那里等待。",
+  "窗外有人沿着院墙慢慢走过去，手上拎着一把没收好的伞。伞尖擦过墙下一丛草，抖落几滴水。等他走远，另一扇窗里传来一声轻轻的咳嗽。",
+  "天色渐暗，我把书向灯下移了一点。纸页的左边亮了，右边陷进一小块阴影。翻到下一页的时候，我扶住页角停了一下，看见桌面上有一道浅浅的光正随着纸张移动。",
+  "我决定把剩下的几页留到明天。有些书等着人给出答案，有些书只要在桌上多放一晚。离开的时候，我把书签往里面推了半寸，记下读到的那一行。",
+  "走到门外才发现，院子里的水已经退到石阶以下。青石还是湿的，一小块天光留在最浅的地方，随着风轻轻晃了一下。",
+].join("\n\n");
