@@ -1,3 +1,24 @@
+@font-face {
+  font-family: "Paperfold Book";
+  src: url("./fonts/book-latin.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Paperfold Song";
+  src: url("./fonts/book-cn.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Paperfold Kai";
+  src: url("./fonts/wenkai.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+
 :root {
   color-scheme: light;
   --desk: #e7ebe3;
@@ -7,6 +28,21 @@
   --green: #24443a;
   --gold: #d5a85a;
   --edge: #d8ded2;
+  --panel: #f3f5ed;
+  --control: #f5f7f0;
+  --control-hover: #fdfef9;
+  --control-accent: var(--green);
+  --control-on-accent: var(--paper);
+  --track: #cbd5ca;
+  --focus: #396c5c;
+  --selection: #c4dbce;
+  --paper-edge: #d6cfbe;
+  --paper-layer: #e7e0d1;
+  --paper-outline: #bab8aa;
+  --paper-binding: #c5ba9c40;
+  --fold-surface: #faf6e9;
+  --fold-ridge: #e8dfca;
+  --fold-edge: #b5a88c;
   --ui: -apple-system, BlinkMacSystemFont, "PingFang SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
   --serif: "Songti SC", "Noto Serif CJK SC", "Noto Serif SC", "STSong", "SimSun", Georgia, serif;
   font-family: var(--ui);
@@ -14,14 +50,66 @@
   background: var(--desk);
 }
 
+:root[data-reader-theme="sand"] {
+  --desk: #e8dcc7;
+  --paper: #f6ebd7;
+  --panel: #f3e8d5;
+  --control: #faf0de;
+  --control-hover: #fff5e5;
+  --edge: #d5c5ac;
+  --paper-edge: #cbb895;
+  --paper-layer: #e8d6b6;
+  --fold-surface: #f6e6ca;
+  --fold-ridge: #e9d6b6;
+}
+
+:root[data-reader-theme="sage"] {
+  --desk: #d9e5dc;
+  --paper: #e7efe5;
+  --panel: #e8f0e8;
+  --control: #f0f5ef;
+  --control-hover: #f9fcf8;
+  --edge: #c7dacb;
+  --paper-edge: #bdcec0;
+  --paper-layer: #d7e4d8;
+  --fold-surface: #edf5ec;
+  --fold-ridge: #d2e1d4;
+  --fold-edge: #a6baaa;
+}
+
+:root[data-reader-theme="night"] {
+  color-scheme: dark;
+  --desk: #171e1b;
+  --ink: #e7ebe2;
+  --muted: #b4c5ba;
+  --paper: #222b26;
+  --green: #3c6754;
+  --edge: #475b50;
+  --panel: #29372f;
+  --control: #303e35;
+  --control-hover: #3b4b41;
+  --control-accent: #b9d7c3;
+  --control-on-accent: #202c24;
+  --track: #546b5e;
+  --focus: #a6cbb6;
+  --selection: #4b6b5b;
+  --paper-edge: #121916;
+  --paper-layer: #36473e;
+  --paper-outline: #111713;
+  --paper-binding: #0b110d99;
+  --fold-surface: #3a4c42;
+  --fold-ridge: #2c3b32;
+  --fold-edge: #18231d;
+}
+
 *, *::before, *::after { box-sizing: border-box; }
 [hidden] { display: none !important; }
 body { margin: 0; }
-button, textarea, input { font: inherit; color: inherit; }
+button, textarea, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 button:disabled { opacity: .36; cursor: default; }
-button:focus-visible, input:focus-visible, .paper:focus-visible {
-  outline: 2px solid #396c5c;
+button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible, .paper:focus-visible {
+  outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
 
@@ -39,6 +127,9 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   min-height: 44px;
   margin-block-end: clamp(24px, 7vh, 70px);
 }
+
+.entry-actions, .reader-actions { display: flex; align-items: center; }
+.update-link { display: inline-flex; align-items: center; text-decoration: none; }
 
 .brand {
   display: flex;
@@ -162,7 +253,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
 }
 
 .sample { margin-inline-start: -8px; }
-.quiet:hover:not(:disabled) { color: var(--green); background: #2b49350b; }
+.quiet:hover:not(:disabled) { color: var(--control-accent); background: #2b49350b; }
 .resume span { color: var(--green); margin-inline-start: 3px; }
 
 .primary {
@@ -201,6 +292,12 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   padding: var(--reader-top) var(--reader-right) var(--reader-bottom) var(--reader-left);
 }
 
+.reader[data-typeface="book"] {
+  --reading-font: "Paperfold Book", "Paperfold Song", var(--serif);
+}
+.reader[data-typeface="wenkai"] { --reading-font: "Paperfold Kai", var(--serif); }
+.reader[data-typeface="sans"] { --reading-font: var(--ui); }
+
 .reader.is-fullscreen {
   --page-top: max(var(--page-y), calc(env(safe-area-inset-top) + 12px));
   --page-right: max(var(--page-x), calc(50% - 288px), calc(env(safe-area-inset-right) + 12px));
@@ -232,7 +329,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   padding: 3px 7px;
   border: 1px solid var(--edge);
   border-radius: 5px;
-  background: #f3f5ed;
+  background: var(--panel);
   box-shadow: 0 2px 12px #202e2424;
   pointer-events: auto;
 }
@@ -264,8 +361,8 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   min-width: 0;
   border-radius: 2px 5px 5px 2px;
   background: var(--paper);
-  box-shadow: -4px 0 0 var(--green), 3px 0 0 #d6cfbe, 5px 1px 0 #e7e0d1,
-    6px 2px 0 #bab8aa, 0 13px 35px #202e2424;
+  box-shadow: -4px 0 0 var(--green), 3px 0 0 var(--paper-edge), 5px 1px 0 var(--paper-layer),
+    6px 2px 0 var(--paper-outline), 0 13px 35px #202e2424;
   cursor: grab;
   touch-action: pan-y pinch-zoom;
   -webkit-tap-highlight-color: transparent;
@@ -290,7 +387,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
 .tap-zones button:focus-visible { outline-offset: -4px; }
 .leaf, .shadow { position: absolute; inset: 0; }
 .leaf-front, .leaf-under {
-  background: linear-gradient(90deg, #c5ba9c40 0, #e6dfcf30 9px, transparent 21px), var(--paper);
+  background: linear-gradient(90deg, var(--paper-binding), transparent 21px), var(--paper);
 }
 .leaf-under, .shadow, .leaf-reverse { visibility: hidden; }
 .is-turning :is(.leaf-under, .shadow, .leaf-reverse) { visibility: visible; }
@@ -304,7 +401,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   white-space: pre-wrap;
   white-space: break-spaces;
   text-align: start;
-  font-family: var(--serif);
+  font-family: var(--reading-font, var(--serif));
   font-size: var(--reading-size);
   line-height: 1.76;
 }
@@ -315,7 +412,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   user-select: text;
 }
 
-.leaf-front .page-copy::selection { background: #c4dbce; }
+.leaf-front .page-copy::selection { background: var(--selection); }
 .is-turning .leaf-front .page-copy {
   pointer-events: none;
   -webkit-user-select: none;
@@ -334,19 +431,25 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
 .leaf-reverse {
   pointer-events: none;
   background: linear-gradient(var(--fold-angle, 90deg),
-    #e9e0ca calc(var(--fold-line) - 92px),
-    #faf6e9 calc(var(--fold-line) - 45px),
-    #e8dfca calc(var(--fold-line) - 9px),
-    #b5a88c var(--fold-line));
+    var(--fold-ridge) calc(var(--fold-line) - 92px),
+    var(--fold-surface) calc(var(--fold-line) - 45px),
+    var(--fold-ridge) calc(var(--fold-line) - 9px),
+    var(--fold-edge) var(--fold-line));
 }
 
 .navigation {
   grid-template-columns: auto minmax(0, 1fr) auto;
   row-gap: 5px;
 }
+.reading-options {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: space-between;
+}
+
 .tap-modes {
-  grid-column: span 2;
-  justify-self: start;
   display: flex;
   gap: 2px;
   padding: 2px;
@@ -355,22 +458,82 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
 }
 .tap-modes button { min-width: 54px; }
 .tap-modes button[aria-pressed="true"] {
-  color: var(--paper);
-  background: var(--green);
+  color: var(--control-on-accent);
+  background: var(--control-accent);
+}
+
+.appearance {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 3px 8px;
+  padding: 3px 2px;
+  border-block: 1px solid var(--edge);
+}
+
+.font-option {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: .85rem;
+}
+
+.font-option select {
+  min-height: 44px;
+  padding: 0 4px 0 6px;
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  background: var(--control);
+  color: var(--ink);
+}
+
+.theme-options {
+  display: flex;
+  margin-inline-start: auto;
+}
+
+.theme-choice {
+  display: grid;
+  place-items: center;
+  width: 39px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.theme-choice::before {
+  content: "";
+  width: 23px;
+  height: 23px;
+  border: 1px solid #788b7b;
+  border-radius: 50%;
+  background: var(--swatch, #fbf9f1);
+}
+.theme-choice[data-theme-choice="sand"] { --swatch: #f6ebd7; }
+.theme-choice[data-theme-choice="sage"] { --swatch: #e7efe5; }
+.theme-choice[data-theme-choice="night"] { --swatch: #222b26; }
+.theme-choice[aria-pressed="true"]::before {
+  box-shadow: 0 0 0 2px var(--panel), 0 0 0 4px var(--control-accent);
 }
 .arrow {
   min-width: 48px;
   min-height: 44px;
-  border: 1px solid #ccd5c8;
+  border: 1px solid var(--edge);
   border-radius: 4px;
-  background: #f5f7f0;
-  color: var(--green);
+  background: var(--control);
+  color: var(--control-accent);
   font-family: Georgia, serif;
   font-size: 33px;
   line-height: .85;
 }
 
-.arrow:hover:not(:disabled) { background: #fdfef9; border-color: #70877a; }
+.arrow:hover:not(:disabled) { background: var(--control-hover); border-color: var(--focus); }
 .position {
   display: flex;
   align-items: center;
@@ -395,10 +558,10 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
 .position input::-webkit-slider-runnable-track {
   height: 3px;
   border-radius: 8px;
-  background: linear-gradient(90deg, #4c7160 var(--progress-fill), #cbd5ca var(--progress-fill));
+  background: linear-gradient(90deg, var(--focus) var(--progress-fill), var(--track) var(--progress-fill));
 }
-.position input::-moz-range-track { height: 3px; border-radius: 8px; background: #cbd5ca; }
-.position input::-moz-range-progress { height: 3px; border-radius: 8px; background: #4c7160; }
+.position input::-moz-range-track { height: 3px; border-radius: 8px; background: var(--track); }
+.position input::-moz-range-progress { height: 3px; border-radius: 8px; background: var(--focus); }
 .position input::-webkit-slider-thumb {
   appearance: none;
   width: 13px;
@@ -406,14 +569,14 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   margin-top: -5px;
   border: 2px solid var(--desk);
   border-radius: 50%;
-  background: #456b5a;
+  background: var(--focus);
 }
 .position input::-moz-range-thumb {
   width: 10px;
   height: 10px;
   border: 2px solid var(--desk);
   border-radius: 50%;
-  background: #456b5a;
+  background: var(--focus);
 }
 .position input:disabled { opacity: .42; cursor: default; }
 .reader-note {
@@ -421,7 +584,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   inset: auto var(--reader-right) var(--reader-bottom) var(--reader-left);
   padding: 6px;
   border-radius: 4px;
-  background: #f3f5ed;
+  background: var(--panel);
   pointer-events: none;
 }
 .reader-controls:not([hidden]) ~ .reader-note { margin-bottom: 110px; }

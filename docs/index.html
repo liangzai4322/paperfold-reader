@@ -8,14 +8,17 @@
   <title>纸间</title>
   <link rel="icon" href="./icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon.png">
-  <link rel="stylesheet" href="./styles.css?v=4">
-  <script type="module" src="./js/app.js?v=4"></script>
+  <link rel="stylesheet" href="./styles.css?v=5">
+  <script type="module" src="./js/app.js?v=5"></script>
 </head>
 <body>
   <main id="entry" class="entry">
     <header class="entry-bar">
       <div class="brand"><span class="bookmark" aria-hidden="true"></span>纸间</div>
-      <button class="quiet resume" id="resume" type="button" hidden>继续阅读 <span aria-hidden="true">↗</span></button>
+      <div class="entry-actions">
+        <a class="quiet update-link" href="./native/update" data-native-update hidden>检查更新</a>
+        <button class="quiet resume" id="resume" type="button" hidden>继续阅读 <span aria-hidden="true">↗</span></button>
+      </div>
     </header>
     <div class="manuscript">
       <aside class="cover" aria-hidden="true"><div class="cover-rule"></div><div class="cover-mark"></div></aside>
@@ -49,16 +52,38 @@
       <header class="reader-bar">
         <button class="quiet edit-link" id="back" type="button"><span aria-hidden="true">‹</span> 换一篇</button>
         <h1 id="book-title" class="book-title"></h1>
-        <button class="quiet" id="fullscreen" type="button">全屏</button>
+        <div class="reader-actions">
+          <a class="quiet update-link" href="./native/update" data-native-update hidden>检查更新</a>
+          <button class="quiet" id="fullscreen" type="button">全屏</button>
+        </div>
       </header>
       <nav class="navigation" aria-label="阅读工具">
-        <div class="tap-modes" role="group" aria-label="轻点翻页模式">
-          <button class="quiet" id="tap-mode-double" type="button" aria-pressed="true">双面</button>
-          <button class="quiet" id="tap-mode-single" type="button" aria-pressed="false">单面</button>
+        <div class="reading-options">
+          <div class="tap-modes" role="group" aria-label="轻点翻页模式">
+            <button class="quiet" id="tap-mode-double" type="button" aria-pressed="true">双面</button>
+            <button class="quiet" id="tap-mode-single" type="button" aria-pressed="false">单面</button>
+          </div>
+          <div class="type-tools" role="group" aria-label="正文字号">
+            <button class="quiet" id="smaller" type="button" aria-label="减小字号">A−</button>
+            <button class="quiet" id="larger" type="button" aria-label="增大字号">A+</button>
+          </div>
+          <button class="quiet" id="appearance-toggle" type="button" aria-controls="appearance" aria-expanded="false">外观</button>
         </div>
-        <div class="type-tools" role="group" aria-label="正文字号">
-          <button class="quiet" id="smaller" type="button" aria-label="减小字号">A−</button>
-          <button class="quiet" id="larger" type="button" aria-label="增大字号">A+</button>
+        <div class="appearance" id="appearance" hidden>
+          <label class="font-option" for="reading-font">字体
+            <select id="reading-font">
+              <option value="system">系统宋体</option>
+              <option value="book">书卷衬线</option>
+              <option value="wenkai">文楷</option>
+              <option value="sans">无衬线</option>
+            </select>
+          </label>
+          <div class="theme-options" role="group" aria-label="阅读背景">
+            <button class="theme-choice" type="button" data-theme-choice="paper" aria-label="原纸" title="原纸" aria-pressed="true"></button>
+            <button class="theme-choice" type="button" data-theme-choice="sand" aria-label="暖砂" title="暖砂" aria-pressed="false"></button>
+            <button class="theme-choice" type="button" data-theme-choice="sage" aria-label="浅绿" title="浅绿" aria-pressed="false"></button>
+            <button class="theme-choice" type="button" data-theme-choice="night" aria-label="夜读" title="夜读" aria-pressed="false"></button>
+          </div>
         </div>
         <button class="arrow" id="previous" type="button" aria-label="上一页" disabled><span aria-hidden="true">‹</span></button>
         <div class="position">

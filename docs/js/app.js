@@ -1,6 +1,6 @@
 import { createPager, normalizeText } from "./pagination.js";
 import { bindPageTurn } from "./page-turn.js?v=4";
-import { createBookStorage } from "./storage.js?v=3";
+import { createBookStorage } from "./storage.js?v=5";
 
 const byId = (id) => document.getElementById(id);
 const entry = byId("entry");
@@ -9,6 +9,11 @@ const field = byId("manuscript");
 const resume = byId("resume");
 const stage = byId("paper");
 const controls = byId("reader-controls");
+const appearancePanel = byId("appearance");
+const appearanceToggle = byId("appearance-toggle");
+const fontChoice = byId("reading-font");
+const themeChoices = [...document.querySelectorAll("[data-theme-choice]")];
+const themeColor = document.querySelector('meta[name="theme-color"]');
 const settingsToggle = byId("settings-toggle");
 const fullscreen = byId("fullscreen");
 const title = byId("book-title");
@@ -28,12 +33,15 @@ const percentage = byId("position-label");
 const readerNote = byId("reader-note");
 const storage = createBookStorage(globalThis.indexedDB);
 const fontSizes = [16, 18, 21, 24, 28];
-const defaultPosition = { offset: 0, fontIndex: 1 };
+const defaultAppearance = { fontIndex: 1, typeface: "system", theme: "paper" };
+const defaultPosition = { offset: 0, fontIndex: defaultAppearance.fontIndex };
 const percentFormat = new Intl.NumberFormat("zh-CN", { style: "percent", maximumFractionDigits: 1 });
 
 let saved;
 let session;
 let tapMode;
+let appearance = defaultAppearance;
+let appearanceChanged = false;
 let layoutFrame = 0;
 let cancelWarmup = () => {};
 
@@ -65,8 +73,14 @@ function storageFailed() {
 
 function setControls(open) {
   if (!open && controls.contains(document.activeElement)) settingsToggle.focus({ preventScroll: true });
+  if (!open) setAppearancePanel(false);
   controls.hidden = !open;
   settingsToggle.setAttribute("aria-expanded", String(open));
+}
+
+function setAppearancePanel(open) {
+  appearancePanel.hidden = !open;
+  appearanceToggle.setAttribute("aria-expanded", String(open));
 }
 
 function setFullscreen(active) {
@@ -133,7 +147,7 @@ function tapLeftAction() {
 }
 
 function showPage(page) {
-  const { book, fontIndex, persist } = session;
+  const { book, persist } = session;
   session.page = page;
   pageText.textContent = book.text.slice(page.start, page.end);
   const last = page.end === book.text.length;
@@ -146,7 +160,7 @@ function showPage(page) {
   displayProgress(tenths);
   stage.setAttribute("aria-busy", "false");
   if (persist) {
-    const position = { offset: page.start, fontIndex };
+    const position = { offset: page.start, fontIndex: appearance.fontIndex };
     saved = { book, position };
     storage.savePosition(book.id, position).catch(storageFailed);
   }
@@ -163,7 +177,7 @@ function reflow(anchor, force = false) {
   const width = measure.clientWidth;
   const height = measure.clientHeight;
   if (!width || !height) return;
-  const layout = [width, height, session.fontIndex].join("/");
+  const layout = [width, height, appearance.fontIndex, appearance.typeface].join("/");
   if (session.layout === layout && !force) return;
   cancelWarmup();
   turn.clear();
@@ -181,24 +195,52 @@ function scheduleReflow() {
   });
 }
 
-function updateFont() {
-  reader.style.setProperty("--reading-size", fontSizes[session.fontIndex] + "px");
-  smaller.disabled = session.fontIndex === 0;
-  larger.disabled = session.fontIndex === fontSizes.length - 1;
+function applyAppearance() {
+  const { fontIndex, typeface, theme } = appearance;
+  const root = document.documentElement;
+  if (reader.hidden) delete root.dataset.readerTheme;
+  else root.dataset.readerTheme = theme;
+  themeColor.content = getComputedStyle(root).getPropertyValue("--desk").trim();
+  reader.dataset.typeface = typeface;
+  reader.style.setProperty("--reading-size", fontSizes[fontIndex] + "px");
+  fontChoice.value = typeface;
+  smaller.disabled = fontIndex === 0;
+  larger.disabled = fontIndex === fontSizes.length - 1;
+  for (const option of themeChoices) {
+    option.setAttribute("aria-pressed", String(option.dataset.themeChoice === theme));
+  }
+}
+
+function changeAppearance(changes) {
+  appearance = { ...appearance, ...changes };
+  appearanceChanged = true;
+  applyAppearance();
+  storage.saveAppearance(appearance).catch(storageFailed);
+  if (session?.page) reflow(session.page.start);
+}
+
+function restoredAppearance(record, position) {
+  const fontIndex = record?.fontIndex ?? position?.fontIndex;
+  return {
+    fontIndex: Number.isInteger(fontIndex) && fontSizes[fontIndex] ? fontIndex : defaultAppearance.fontIndex,
+    typeface: [...fontChoice.options].some((option) => option.value === record?.typeface)
+      ? record.typeface : defaultAppearance.typeface,
+    theme: themeChoices.some((option) => option.dataset.themeChoice === record?.theme)
+      ? record.theme : defaultAppearance.theme,
+  };
 }
 
 function openReader({ book, position = defaultPosition }, persist = true) {
   session = {
     book, persist,
     initialOffset: position.offset,
-    fontIndex: fontSizes[position.fontIndex] ? position.fontIndex : defaultPosition.fontIndex,
   };
   title.textContent = book.text.slice(0, 300).trimStart().split("\n", 1)[0] || "长文";
   setControls(false);
   entry.hidden = true;
   reader.hidden = false;
   stage.setAttribute("aria-busy", "true");
-  updateFont();
+  applyAppearance();
   scheduleReflow();
   stage.focus({ preventScroll: true });
   window.scrollTo(0, 0);
@@ -215,16 +257,15 @@ function openEditor() {
   resume.hidden = !saved;
   reader.hidden = true;
   entry.hidden = false;
+  applyAppearance();
   field.focus({ preventScroll: true });
 }
 
 function changeFont(direction) {
   if (!session?.page) return;
-  const fontIndex = session.fontIndex + direction;
+  const fontIndex = appearance.fontIndex + direction;
   if (!fontSizes[fontIndex]) return;
-  session.fontIndex = fontIndex;
-  updateFont();
-  reflow(session.page.start);
+  changeAppearance({ fontIndex });
 }
 
 function seek(tenths) {
@@ -252,8 +293,9 @@ byId("edit").addEventListener("submit", (event) => {
   }
   const id = globalThis.crypto?.randomUUID?.() ?? Date.now() + "-" + Math.random();
   const book = { id, text };
-  saved = { book, position: defaultPosition };
-  storage.saveBook(book, defaultPosition).catch(storageFailed);
+  const position = { offset: 0, fontIndex: appearance.fontIndex };
+  saved = { book, position };
+  storage.saveBook(book, position).catch(storageFailed);
   field.value = "";
   openReader(saved);
 });
@@ -262,6 +304,11 @@ resume.addEventListener("click", () => { if (saved) openReader(saved); });
 byId("back").addEventListener("click", openEditor);
 smaller.addEventListener("click", () => changeFont(-1));
 larger.addEventListener("click", () => changeFont(1));
+appearanceToggle.addEventListener("click", () => setAppearancePanel(appearancePanel.hidden));
+fontChoice.addEventListener("change", () => changeAppearance({ typeface: fontChoice.value }));
+for (const option of themeChoices) {
+  option.addEventListener("click", () => changeAppearance({ theme: option.dataset.themeChoice }));
+}
 previous.addEventListener("click", () => turn.shift(-1));
 next.addEventListener("click", () => turn.shift(1));
 tapLeft.addEventListener("click", tapLeftAction);
@@ -293,7 +340,7 @@ byId("sample").addEventListener("click", () => {
 
 document.addEventListener("keydown", (event) => {
   if (reader.hidden || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || turn.hasTextSelection()) return;
-  if (event.target === progress && event.key !== "Escape") return;
+  if ((event.target === progress || event.target === fontChoice) && event.key !== "Escape") return;
   switch (event.key) {
     case "ArrowLeft": turn.shift(-1); break;
     case "ArrowRight": turn.shift(1); break;
@@ -304,7 +351,10 @@ document.addEventListener("keydown", (event) => {
       setControls(controls.hidden);
       break;
     case "Escape":
-      if (!controls.hidden) setControls(false);
+      if (!appearancePanel.hidden) {
+        setAppearancePanel(false);
+        appearanceToggle.focus();
+      } else if (!controls.hidden) setControls(false);
       else if (reader.classList.contains("is-fullscreen")) leaveFullscreen();
       else return;
       break;
@@ -316,11 +366,24 @@ document.addEventListener("keydown", (event) => {
 const layoutObserver = new ResizeObserver(scheduleReflow);
 layoutObserver.observe(measure);
 
+document.fonts?.addEventListener("loadingdone", () => {
+  if (session?.page) reflow(session.page.start, true);
+});
+
+if (location.origin === "https://appassets.androidplatform.net") {
+  for (const updateLink of document.querySelectorAll("[data-native-update]")) updateLink.hidden = false;
+}
+
 storage.loadTapMode().then((mode) => {
   if (tapMode === undefined) setTapMode(mode);
 }).catch(storageFailed);
 
-storage.load().then((record) => {
+Promise.all([storage.load(), storage.loadAppearance()]).then(([record, storedAppearance]) => {
+  if (!appearanceChanged) {
+    appearance = restoredAppearance(storedAppearance, record?.position);
+    applyAppearance();
+    if (session) scheduleReflow();
+  }
   if (!record || saved) return;
   saved = record;
   resume.hidden = false;

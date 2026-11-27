@@ -1,6 +1,7 @@
 const storeName = "reading";
 const bookKey = "latest";
 const tapModeKey = "tap-mode";
+const appearanceKey = "appearance";
 
 export function createBookStorage(indexedDB) {
   let connecting;
@@ -60,6 +61,15 @@ export function createBookStorage(indexedDB) {
     },
     saveTapMode(mode) {
       return transact("readwrite", (store) => store.put(mode, tapModeKey));
+    },
+    loadAppearance() {
+      return transact("readonly", (store, finish) => {
+        const request = store.get(appearanceKey);
+        request.onsuccess = () => finish(request.result);
+      });
+    },
+    saveAppearance(appearance) {
+      return transact("readwrite", (store) => store.put(appearance, appearanceKey));
     },
   };
 }

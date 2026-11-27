@@ -1,0 +1,13 @@
+Paperfold Book is a static Latin subset of Source Serif 4 from Adobe.
+https://github.com/adobe-fonts/source-serif
+
+Paperfold Song is a static subset of Noto Serif SC from Google.
+https://github.com/notofonts/noto-cjk
+
+Paperfold Kai is a subset of LXGW WenKai v1.530.
+https://github.com/lxgw/LxgwWenKai/releases/tag/v1.530
+
+Each font is renamed and converted to WOFF2. The Chinese subsets contain
+GB2312 and common Traditional Chinese characters. The device supplies fallback
+glyphs for other characters. Original SIL Open Font License notices are included
+in the corresponding OFL files.
