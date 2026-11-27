@@ -122,6 +122,8 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 
 .entry-bar {
   display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
   justify-content: space-between;
   align-items: center;
   min-height: 44px;
@@ -129,6 +131,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 
 .entry-actions, .reader-actions { display: flex; align-items: center; }
+.entry-actions { margin-inline-start: auto; }
 .update-link { display: inline-flex; align-items: center; text-decoration: none; }
 
 .brand {
@@ -156,6 +159,71 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   border-radius: 8px 5px 5px 8px;
   box-shadow: 0 23px 44px #202e2420, 0 3px 6px #202e2420;
 }
+
+.import-nav { display: flex; align-items: center; flex-wrap: wrap; }
+
+.bookshelf {
+  padding: clamp(16px, 4.5vw, 39px);
+  border: 1px solid var(--edge);
+  border-inline-start: 6px solid var(--green);
+  border-radius: 5px;
+  background: var(--paper);
+  box-shadow: 0 14px 32px #202e2418;
+}
+
+.bookshelf-heading, .cloud-dialog header, .cloud-dialog footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.bookshelf h1, .cloud-dialog h2 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 1.4rem;
+}
+
+.book-list { padding: 0; margin: 12px 0 0; list-style: none; }
+.book-list li { border-block-start: 1px solid var(--edge); }
+.book-list button {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 55px;
+  width: 100%;
+  padding: 8px 4px;
+  border: 0;
+  background: transparent;
+  text-align: start;
+}
+.book-list button:hover { background: #2b493508; }
+.book-list .book-name { overflow-wrap: anywhere; font-family: var(--serif); }
+.book-list .book-progress { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+
+.cloud-dialog {
+  width: min(480px, calc(100% - 26px));
+  padding: 20px;
+  border: 1px solid var(--edge);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--paper);
+}
+.cloud-dialog::backdrop { background: #142a2077; }
+.cloud-dialog form { display: grid; gap: 8px; }
+.cloud-dialog label { margin-top: 4px; color: var(--muted); font-size: .85rem; }
+.cloud-dialog input {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  background: var(--control);
+  font-size: 16px;
+}
+.cloud-status { min-height: 1.25em; margin: 5px 0; color: var(--muted); font-size: .85rem; }
+.cloud-dialog footer { justify-content: flex-end; }
 
 .cover {
   position: relative;

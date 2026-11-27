@@ -1,12 +1,24 @@
 import { createPager, normalizeText } from "./pagination.js";
 import { bindPageTurn } from "./page-turn.js?v=4";
-import { createBookStorage } from "./storage.js?v=5";
+import { createBookStorage } from "./storage.js?v=6";
+import { readingText, titleFrom } from "./markdown.js?v=6";
+import { cloudAddress, createCloudClient, syncLibrary } from "./cloud.js?v=6";
 
 const byId = (id) => document.getElementById(id);
 const entry = byId("entry");
 const reader = byId("reader");
 const field = byId("manuscript");
 const resume = byId("resume");
+const shelf = byId("bookshelf");
+const importer = byId("importer");
+const bookList = byId("book-list");
+const entryNote = byId("entry-note");
+const cloudDialog = byId("cloud-dialog");
+const cloudServer = byId("cloud-server");
+const cloudKey = byId("cloud-key");
+const cloudStatus = byId("cloud-status");
+const cloudConnect = byId("cloud-connect");
+const cloudDisconnect = byId("cloud-disconnect");
 const stage = byId("paper");
 const controls = byId("reader-controls");
 const appearancePanel = byId("appearance");
@@ -39,11 +51,20 @@ const percentFormat = new Intl.NumberFormat("zh-CN", { style: "percent", maximum
 
 let saved;
 let session;
-let tapMode;
+let tapMode = "single";
+let tapModeChosen = false;
 let appearance = defaultAppearance;
 let appearanceChanged = false;
 let layoutFrame = 0;
 let cancelWarmup = () => {};
+let catalog = [];
+let cloud;
+let syncJob;
+let syncTimer;
+let nextPullAt = 0;
+let loadingBook = false;
+let importing = false;
+const boot = Promise.all([storage.load(), storage.loadAppearance(), storage.loadCloud(), storage.loadTapMode()]);
 
 const turn = bindPageTurn(stage, {
   front: byId("front"),
@@ -66,9 +87,108 @@ const turn = bindPageTurn(stage, {
 });
 
 function storageFailed() {
-  byId("entry-note").textContent = "这台设备暂时无法保存文字和进度。";
+  entryNote.textContent = "这台设备暂时无法保存文字和进度。";
   readerNote.textContent = "本机保存失败。保留当前页面可以继续阅读。";
   readerNote.hidden = false;
+}
+
+function setShelfVisible(show) {
+  shelf.hidden = !show;
+  importer.hidden = show;
+  byId("cancel-import").hidden = !catalog.length;
+}
+
+async function refreshShelf() {
+  const firstBooks = !catalog.length;
+  catalog = await storage.listBooks();
+  const items = catalog.map((book) => {
+    const row = document.createElement("li");
+    const open = document.createElement("button");
+    open.type = "button";
+    open.dataset.bookId = book.id;
+    const name = document.createElement("span");
+    name.className = "book-name";
+    name.textContent = book.title;
+    const progress = document.createElement("span");
+    progress.className = "book-progress";
+    progress.textContent = book.pendingUpload && cloud ? "待同步" : !book.cached ? "云端" : book.offset ? "读过" : "";
+    open.append(name, progress);
+    row.append(open);
+    return row;
+  });
+  bookList.replaceChildren(...items);
+  byId("cancel-import").hidden = !catalog.length;
+  if (firstBooks && catalog.length && !field.value && !entry.hidden) setShelfVisible(true);
+}
+
+function status(message) {
+  cloudStatus.textContent = message;
+  entryNote.textContent = message || "文章和进度保存在本机。";
+}
+
+function syncError(error) {
+  return [401, 403].includes(error.status)
+    ? "同步密钥或访问权限不正确。"
+    : "暂时无法同步。恢复连接后会重试。";
+}
+
+async function syncNow() {
+  if (!cloud || syncJob) return syncJob;
+  const client = createCloudClient(cloud);
+  syncJob = (async () => {
+    status("正在同步…");
+    try {
+      const pull = Date.now() >= nextPullAt;
+      const deferred = await syncLibrary(storage, client, { pull });
+      if (pull) nextPullAt = Date.now() + 30000;
+      if (!entry.hidden) await refreshShelf();
+      status(deferred ? "同步完成，部分过长或冲突的文章保留在本机。" : "云端已同步");
+    } catch (error) {
+      status(syncError(error));
+    } finally {
+      syncJob = undefined;
+    }
+  })();
+  return syncJob;
+}
+
+function refreshCloud() {
+  nextPullAt = 0;
+  scheduleSync(0);
+}
+
+function scheduleSync(delay = 900) {
+  clearTimeout(syncTimer);
+  if (!cloud) return;
+  syncTimer = setTimeout(() => {
+    if (syncJob) scheduleSync();
+    else syncNow();
+  }, delay);
+}
+
+async function readBook(id) {
+  if (loadingBook) return;
+  loadingBook = true;
+  try {
+    let record = await storage.getBook(id);
+    if (!record && cloud) {
+      const remote = await createCloudClient(cloud).get(id);
+      await storage.cacheRemote(remote);
+      record = await storage.getBook(id);
+    }
+    if (!record) {
+      status("这篇文章尚未下载。连接云端后再打开。");
+      return;
+    }
+    await storage.rememberBook(id);
+    saved = record;
+    openReader(record);
+    scheduleSync();
+  } catch (error) {
+    status(syncError(error));
+  } finally {
+    loadingBook = false;
+  }
 }
 
 function setControls(open) {
@@ -125,13 +245,14 @@ function updateTapActions() {
 }
 
 function setTapMode(mode) {
-  tapMode = mode === "single" ? "single" : "double";
+  tapMode = mode === "double" ? "double" : "single";
   singleMode.setAttribute("aria-pressed", String(tapMode === "single"));
   doubleMode.setAttribute("aria-pressed", String(tapMode === "double"));
   updateTapActions();
 }
 
 function chooseTapMode(mode) {
+  tapModeChosen = true;
   setTapMode(mode);
   storage.saveTapMode(tapMode).catch(storageFailed);
 }
@@ -146,7 +267,7 @@ function tapLeftAction() {
   turnFromTap(tapMode === "single" ? 1 : -1);
 }
 
-function showPage(page) {
+function showPage(page, trackProgress = true) {
   const { book, persist } = session;
   session.page = page;
   pageText.textContent = book.text.slice(page.start, page.end);
@@ -162,7 +283,7 @@ function showPage(page) {
   if (persist) {
     const position = { offset: page.start, fontIndex: appearance.fontIndex };
     saved = { book, position };
-    storage.savePosition(book.id, position).catch(storageFailed);
+    if (trackProgress) storage.savePosition(book.id, position).then(() => scheduleSync()).catch(storageFailed);
   }
   warmNextPage();
 }
@@ -172,7 +293,7 @@ function fitsOnPage(text, start, end) {
   return measure.scrollHeight <= measure.clientHeight;
 }
 
-function reflow(anchor, force = false) {
+function reflow(anchor, { force = false, trackProgress = false } = {}) {
   if (!session) return;
   const width = measure.clientWidth;
   const height = measure.clientHeight;
@@ -184,7 +305,7 @@ function reflow(anchor, force = false) {
   const { text } = session.book;
   session.layout = layout;
   session.pager = createPager(text, (start, end) => fitsOnPage(text, start, end));
-  showPage(session.pager.at(anchor));
+  showPage(session.pager.at(anchor), trackProgress);
 }
 
 function scheduleReflow() {
@@ -230,12 +351,13 @@ function restoredAppearance(record, position) {
   };
 }
 
-function openReader({ book, position = defaultPosition }, persist = true) {
+function openReader({ book, position = defaultPosition }, persist = true, rendered = null) {
+  rendered ??= readingText(book.source ?? book.text, book.format || "plain");
   session = {
-    book, persist,
+    book: { ...book, text: rendered.text }, persist,
     initialOffset: position.offset,
   };
-  title.textContent = book.text.slice(0, 300).trimStart().split("\n", 1)[0] || "长文";
+  title.textContent = book.title || titleFrom(rendered.text);
   setControls(false);
   entry.hidden = true;
   reader.hidden = false;
@@ -258,7 +380,9 @@ function openEditor() {
   reader.hidden = true;
   entry.hidden = false;
   applyAppearance();
-  field.focus({ preventScroll: true });
+  setShelfVisible(catalog.length > 0);
+  refreshShelf().catch(storageFailed);
+  refreshCloud();
 }
 
 function changeFont(direction) {
@@ -271,7 +395,7 @@ function changeFont(direction) {
 function seek(tenths) {
   if (!session?.page) return;
   const offset = Math.floor(session.book.text.length * tenths / 1000);
-  reflow(offset, true);
+  reflow(offset, { force: true, trackProgress: true });
 }
 
 field.addEventListener("input", () => field.setCustomValidity(""));
@@ -283,24 +407,107 @@ field.addEventListener("paste", (event) => {
   field.setRangeText(normalizeText(text), field.selectionStart, field.selectionEnd, "end");
   field.setCustomValidity("");
 });
-byId("edit").addEventListener("submit", (event) => {
+byId("edit").addEventListener("submit", async (event) => {
   event.preventDefault();
+  if (importing) return;
   const text = normalizeText(field.value);
   if (!/\S/.test(text)) {
     field.setCustomValidity("请粘贴想读的文字。");
     field.reportValidity();
     return;
   }
-  const id = globalThis.crypto?.randomUUID?.() ?? Date.now() + "-" + Math.random();
-  const book = { id, text };
-  const position = { offset: 0, fontIndex: appearance.fontIndex };
-  saved = { book, position };
-  storage.saveBook(book, position).catch(storageFailed);
-  field.value = "";
-  openReader(saved);
+  importing = true;
+  field.readOnly = true;
+  if (event.submitter) event.submitter.disabled = true;
+  try {
+    await boot.catch(() => {});
+    const id = globalThis.crypto?.randomUUID?.() ?? Date.now() + "-" + Math.random();
+    const rendered = readingText(text);
+    const book = { id, source: rendered.source, format: rendered.format,
+      title: titleFrom(rendered.text), createdAt: Date.now() };
+    const position = { offset: 0, fontIndex: appearance.fontIndex };
+    try {
+      await storage.saveBook(book, position);
+      field.value = "";
+      saved = { book, position };
+      refreshShelf().catch(storageFailed);
+      scheduleSync();
+      openReader(saved, true, rendered);
+    } catch {
+      storageFailed();
+      openReader({ book, position }, false, rendered);
+    }
+  } finally {
+    importing = false;
+    field.readOnly = false;
+    if (event.submitter) event.submitter.disabled = false;
+  }
 });
 
-resume.addEventListener("click", () => { if (saved) openReader(saved); });
+resume.addEventListener("click", () => { if (saved) readBook(saved.book.id); });
+byId("new-book").addEventListener("click", () => {
+  setShelfVisible(false);
+  field.focus();
+});
+byId("cancel-import").addEventListener("click", () => setShelfVisible(true));
+bookList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-book-id]");
+  if (button) readBook(button.dataset.bookId);
+});
+
+byId("cloud-toggle").addEventListener("click", () => {
+  cloudServer.value = cloud?.url || "";
+  cloudKey.value = cloud?.token || "";
+  cloudDisconnect.hidden = !cloud;
+  cloudDialog.showModal();
+});
+byId("cloud-close").addEventListener("click", () => cloudDialog.close());
+cloudServer.addEventListener("input", () => cloudServer.setCustomValidity(""));
+byId("cloud-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const url = cloudAddress(cloudServer.value);
+  if (!url) {
+    cloudServer.setCustomValidity("请填写 HTTPS 服务器地址。");
+    cloudServer.reportValidity();
+    return;
+  }
+  const candidate = { url, token: cloudKey.value.trim() };
+  cloudConnect.disabled = cloudDisconnect.disabled = true;
+  try {
+    if (syncJob) await syncJob;
+    await createCloudClient(candidate).list();
+    await storage.saveCloud(candidate);
+    cloud = candidate;
+    nextPullAt = 0;
+    cloudDisconnect.hidden = false;
+    await syncNow();
+  } catch (error) {
+    cloudStatus.textContent = syncError(error);
+  } finally {
+    cloudConnect.disabled = cloudDisconnect.disabled = false;
+  }
+});
+cloudDisconnect.addEventListener("click", async () => {
+  cloudConnect.disabled = cloudDisconnect.disabled = true;
+  try {
+    if (syncJob) await syncJob;
+    await storage.saveCloud(null);
+    cloud = null;
+    cloudKey.value = "";
+    cloudDisconnect.hidden = true;
+    status("");
+    await refreshShelf();
+  } catch {
+    storageFailed();
+  } finally {
+    cloudConnect.disabled = cloudDisconnect.disabled = false;
+  }
+});
+window.addEventListener("online", refreshCloud);
+document.addEventListener("visibilitychange", () => {
+  if (!document.hidden) refreshCloud();
+});
+
 byId("back").addEventListener("click", openEditor);
 smaller.addEventListener("click", () => changeFont(-1));
 larger.addEventListener("click", () => changeFont(1));
@@ -367,28 +574,30 @@ const layoutObserver = new ResizeObserver(scheduleReflow);
 layoutObserver.observe(measure);
 
 document.fonts?.addEventListener("loadingdone", () => {
-  if (session?.page) reflow(session.page.start, true);
+  if (session?.page) reflow(session.page.start, { force: true });
 });
 
 if (location.origin === "https://appassets.androidplatform.net") {
   for (const updateLink of document.querySelectorAll("[data-native-update]")) updateLink.hidden = false;
 }
 
-storage.loadTapMode().then((mode) => {
-  if (tapMode === undefined) setTapMode(mode);
-}).catch(storageFailed);
-
-Promise.all([storage.load(), storage.loadAppearance()]).then(([record, storedAppearance]) => {
+boot.then(async ([record, storedAppearance, connection, mode]) => {
+  if (!tapModeChosen) setTapMode(mode);
   if (!appearanceChanged) {
     appearance = restoredAppearance(storedAppearance, record?.position);
     applyAppearance();
     if (session) scheduleReflow();
   }
-  if (!record || saved) return;
-  saved = record;
-  resume.hidden = false;
-  if (!session && !field.value) openReader(saved);
+  if (record && !saved) {
+    saved = record;
+    resume.hidden = false;
+  }
+  if (connection?.url && connection?.token) cloud = connection;
+  await refreshShelf();
+  scheduleSync(0);
 }).catch(storageFailed);
+
+setInterval(() => { if (!document.hidden) syncNow(); }, 30000);
 
 const sample = [
   "窗边的下午",

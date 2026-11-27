@@ -1,0 +1,19 @@
+[Unit]
+Description=Paperfold private bookshelf
+After=network.target
+
+[Service]
+Type=exec
+DynamicUser=yes
+StateDirectory=paperfold
+StateDirectoryMode=0700
+EnvironmentFile=/etc/paperfold/sync.env
+ExecStart=/usr/bin/python3 /opt/paperfold/paperfold_sync.py --db /var/lib/paperfold/books.sqlite3
+Restart=on-failure
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
