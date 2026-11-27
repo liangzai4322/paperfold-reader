@@ -1,6 +1,6 @@
 import { createPager, normalizeText } from "./pagination.js";
-import { bindPageTurn } from "./page-turn.js?v=2";
-import { createBookStorage } from "./storage.js";
+import { bindPageTurn } from "./page-turn.js?v=4";
+import { createBookStorage } from "./storage.js?v=3";
 
 const byId = (id) => document.getElementById(id);
 const entry = byId("entry");
@@ -19,8 +19,10 @@ const smaller = byId("smaller");
 const larger = byId("larger");
 const previous = byId("previous");
 const next = byId("next");
-const tapPrevious = byId("tap-previous");
-const tapNext = byId("tap-next");
+const tapLeft = byId("tap-left");
+const tapRight = byId("tap-right");
+const singleMode = byId("tap-mode-single");
+const doubleMode = byId("tap-mode-double");
 const progress = byId("progress");
 const percentage = byId("position-label");
 const readerNote = byId("reader-note");
@@ -31,6 +33,7 @@ const percentFormat = new Intl.NumberFormat("zh-CN", { style: "percent", maximum
 
 let saved;
 let session;
+let tapMode;
 let layoutFrame = 0;
 let cancelWarmup = () => {};
 
@@ -38,6 +41,7 @@ const turn = bindPageTurn(stage, {
   front: byId("front"),
   reverse: byId("reverse"),
   shadow: byId("fold-shadow"),
+  text: pageText,
   preview(direction) {
     if (!session?.page) return null;
     const page = session.pager.adjacent(session.page, direction);
@@ -45,6 +49,12 @@ const turn = bindPageTurn(stage, {
     return page;
   },
   commit: showPage,
+  tap(x) {
+    const center = settingsToggle.getBoundingClientRect();
+    if (x < center.left) return tapLeftAction();
+    if (x >= center.right) return turnFromTap(1);
+    setControls(controls.hidden);
+  },
 });
 
 function storageFailed() {
@@ -93,6 +103,35 @@ function displayProgress(tenths) {
   progress.setAttribute("aria-valuetext", label);
 }
 
+function updateTapActions() {
+  const single = tapMode === "single";
+  tapLeft.setAttribute("aria-label", single ? "下一页" : "上一页");
+  tapLeft.setAttribute("aria-disabled", String(single ? next.disabled : previous.disabled));
+  tapRight.setAttribute("aria-disabled", String(next.disabled));
+}
+
+function setTapMode(mode) {
+  tapMode = mode === "single" ? "single" : "double";
+  singleMode.setAttribute("aria-pressed", String(tapMode === "single"));
+  doubleMode.setAttribute("aria-pressed", String(tapMode === "double"));
+  updateTapActions();
+}
+
+function chooseTapMode(mode) {
+  setTapMode(mode);
+  storage.saveTapMode(tapMode).catch(storageFailed);
+}
+
+function turnFromTap(direction) {
+  if ((direction === 1 ? next : previous).disabled) return;
+  setControls(false);
+  turn.shift(direction);
+}
+
+function tapLeftAction() {
+  turnFromTap(tapMode === "single" ? 1 : -1);
+}
+
 function showPage(page) {
   const { book, fontIndex, persist } = session;
   session.page = page;
@@ -101,8 +140,7 @@ function showPage(page) {
   const tenths = last ? 1000 : Math.min(999, Math.floor(1000 * page.start / book.text.length));
   previous.disabled = page.start === 0;
   next.disabled = last;
-  tapPrevious.setAttribute("aria-disabled", String(previous.disabled));
-  tapNext.setAttribute("aria-disabled", String(next.disabled));
+  updateTapActions();
   progress.disabled = page.start === 0 && last;
   progress.value = String(tenths);
   displayProgress(tenths);
@@ -226,16 +264,10 @@ smaller.addEventListener("click", () => changeFont(-1));
 larger.addEventListener("click", () => changeFont(1));
 previous.addEventListener("click", () => turn.shift(-1));
 next.addEventListener("click", () => turn.shift(1));
-tapPrevious.addEventListener("click", () => {
-  if (previous.disabled) return;
-  setControls(false);
-  turn.shift(-1);
-});
-tapNext.addEventListener("click", () => {
-  if (next.disabled) return;
-  setControls(false);
-  turn.shift(1);
-});
+tapLeft.addEventListener("click", tapLeftAction);
+tapRight.addEventListener("click", () => turnFromTap(1));
+singleMode.addEventListener("click", () => chooseTapMode("single"));
+doubleMode.addEventListener("click", () => chooseTapMode("double"));
 settingsToggle.addEventListener("click", () => setControls(controls.hidden));
 fullscreen.addEventListener("click", () => {
   setControls(false);
@@ -260,7 +292,7 @@ byId("sample").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (reader.hidden || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (reader.hidden || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || turn.hasTextSelection()) return;
   if (event.target === progress && event.key !== "Escape") return;
   switch (event.key) {
     case "ArrowLeft": turn.shift(-1); break;
@@ -283,6 +315,10 @@ document.addEventListener("keydown", (event) => {
 
 const layoutObserver = new ResizeObserver(scheduleReflow);
 layoutObserver.observe(measure);
+
+storage.loadTapMode().then((mode) => {
+  if (tapMode === undefined) setTapMode(mode);
+}).catch(storageFailed);
 
 storage.load().then((record) => {
   if (!record || saved) return;

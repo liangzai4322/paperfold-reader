@@ -8,8 +8,8 @@
   <title>纸间</title>
   <link rel="icon" href="./icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon.png">
-  <link rel="stylesheet" href="./styles.css?v=2">
-  <script type="module" src="./js/app.js?v=2"></script>
+  <link rel="stylesheet" href="./styles.css?v=4">
+  <script type="module" src="./js/app.js?v=4"></script>
 </head>
 <body>
   <main id="entry" class="entry">
@@ -39,9 +39,9 @@
       <div class="leaf leaf-reverse" id="reverse" aria-hidden="true"></div>
       <div class="page-copy measure" id="measure" aria-hidden="true"></div>
       <div class="tap-zones">
-        <button id="tap-previous" type="button" aria-label="上一页" aria-disabled="true"></button>
+        <button id="tap-left" type="button" aria-label="上一页" aria-disabled="true"></button>
         <button id="settings-toggle" type="button" aria-label="阅读设置" aria-controls="reader-controls" aria-expanded="false"></button>
-        <button id="tap-next" type="button" aria-label="下一页" aria-disabled="true"></button>
+        <button id="tap-right" type="button" aria-label="下一页" aria-disabled="true"></button>
       </div>
     </div>
 
@@ -52,14 +52,18 @@
         <button class="quiet" id="fullscreen" type="button">全屏</button>
       </header>
       <nav class="navigation" aria-label="阅读工具">
-        <button class="arrow" id="previous" type="button" aria-label="上一页" disabled><span aria-hidden="true">‹</span></button>
-        <div class="position">
-          <output id="position-label" for="progress">0%</output>
-          <input id="progress" type="range" min="0" max="1000" value="0" aria-label="阅读位置" disabled>
+        <div class="tap-modes" role="group" aria-label="轻点翻页模式">
+          <button class="quiet" id="tap-mode-double" type="button" aria-pressed="true">双面</button>
+          <button class="quiet" id="tap-mode-single" type="button" aria-pressed="false">单面</button>
         </div>
         <div class="type-tools" role="group" aria-label="正文字号">
           <button class="quiet" id="smaller" type="button" aria-label="减小字号">A−</button>
           <button class="quiet" id="larger" type="button" aria-label="增大字号">A+</button>
+        </div>
+        <button class="arrow" id="previous" type="button" aria-label="上一页" disabled><span aria-hidden="true">‹</span></button>
+        <div class="position">
+          <output id="position-label" for="progress">0%</output>
+          <input id="progress" type="range" min="0" max="1000" value="0" aria-label="阅读位置" disabled>
         </div>
         <button class="arrow" id="next" type="button" aria-label="下一页" disabled><span aria-hidden="true">›</span></button>
       </nav>

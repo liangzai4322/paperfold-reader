@@ -48,9 +48,10 @@ function polygon(points) {
   return "polygon(" + points.map(({ x, y }) => x.toFixed(1) + "px " + y.toFixed(1) + "px").join(",") + ")";
 }
 
-export function bindPageTurn(stage, { front, reverse, shadow, preview, commit }) {
+export function bindPageTurn(stage, { front, reverse, shadow, text, preview, commit, tap }) {
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
   const dragThreshold = 9;
+  const holdThreshold = 400;
   let pointer = null;
   let turn = null;
   let frame = 0;
@@ -133,14 +134,20 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
     settle(true);
   }
 
+  function hasTextSelection() {
+    const selection = document.getSelection();
+    return selection && !selection.isCollapsed && selection.containsNode(text, true);
+  }
+
   function onDown(event) {
     if (!event.isPrimary || event.button !== 0) return;
-    suppressClick = turn !== null;
-    if (turn) return;
+    suppressClick = turn !== null || hasTextSelection();
+    if (suppressClick) return;
     const box = stage.getBoundingClientRect();
     pointer = {
       id: event.pointerId, box, x: event.clientX, y: event.clientY,
       downAt: performance.now(), direction: 0,
+      onText: text.contains(event.target),
     };
   }
 
@@ -152,6 +159,8 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
     const { box } = pointer;
     if (!pointer.direction) {
       if (Math.abs(dx) < dragThreshold || Math.abs(dx) < Math.abs(dy) * 0.85) return;
+      if (pointer.onText && (event.pointerType === "mouse" || hasTextSelection()
+          || performance.now() - pointer.downAt >= holdThreshold)) return;
       const direction = dx < 0 ? 1 : -1;
       const y = pointer.y - box.top;
       const edgeY = y < box.height * 0.28 ? 0 : y > box.height * 0.72 ? box.height : y;
@@ -178,12 +187,14 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
     const gesture = pointer;
     pointer = null;
     if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
-    if (cancelled || Math.hypot(gesture.x - event.clientX, gesture.y - event.clientY) >= dragThreshold) {
+    const held = performance.now() - gesture.downAt;
+    if (cancelled || held >= holdThreshold
+        || Math.hypot(gesture.x - event.clientX, gesture.y - event.clientY) >= dragThreshold) {
       suppressClick = true;
     }
     if (!gesture.direction) return;
     const travelled = (gesture.x - event.clientX) * gesture.direction;
-    const quickSwipe = travelled >= 32 && performance.now() - gesture.downAt < 240;
+    const quickSwipe = travelled >= 32 && held < 240;
     const advance = !cancelled && (travelled > gesture.box.width * 0.23 || quickSwipe);
     if (pendingMotion) paint(pendingMotion.travel, pendingMotion.lift);
     settle(advance);
@@ -193,10 +204,17 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
   stage.addEventListener("pointermove", onMove);
   stage.addEventListener("pointerup", (event) => onUp(event, false));
   stage.addEventListener("pointercancel", (event) => onUp(event, true));
+  stage.addEventListener("contextmenu", (event) => {
+    suppressClick = true;
+    if (turn) event.preventDefault();
+    else pointer = null;
+  });
   stage.addEventListener("click", (event) => {
-    // Touch browsers can synthesize a click after a drag or an aborted turn.
-    if (suppressClick && event.detail > 0) event.stopPropagation();
-  }, true);
+    // The button layer remains available to keyboard and assistive input.
+    if (event.detail > 0 && !event.target.closest("button") && !suppressClick && !hasTextSelection()) {
+      tap(event.clientX);
+    }
+  });
 
-  return { shift, clear };
+  return { shift, clear, hasTextSelection };
 }

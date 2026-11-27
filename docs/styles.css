@@ -268,8 +268,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
     6px 2px 0 #bab8aa, 0 13px 35px #202e2424;
   cursor: grab;
   touch-action: pan-y pinch-zoom;
-  user-select: none;
-  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .paper.is-turning { cursor: grabbing; }
@@ -279,6 +278,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   z-index: 1;
   display: grid;
   grid-template-columns: 30% 40% 30%;
+  pointer-events: none;
 }
 
 .tap-zones button {
@@ -286,10 +286,8 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   padding: 0;
   border: 0;
   background: transparent;
-  -webkit-tap-highlight-color: transparent;
 }
 .tap-zones button:focus-visible { outline-offset: -4px; }
-.is-turning .tap-zones button { cursor: grabbing; }
 .leaf, .shadow { position: absolute; inset: 0; }
 .leaf-front, .leaf-under {
   background: linear-gradient(90deg, #c5ba9c40 0, #e6dfcf30 9px, transparent 21px), var(--paper);
@@ -311,6 +309,18 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   line-height: 1.76;
 }
 
+.leaf-front .page-copy {
+  cursor: text;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.leaf-front .page-copy::selection { background: #c4dbce; }
+.is-turning .leaf-front .page-copy {
+  pointer-events: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
 .measure { visibility: hidden; pointer-events: none; }
 .shadow {
   pointer-events: none;
@@ -330,7 +340,24 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
     #b5a88c var(--fold-line));
 }
 
-.navigation { grid-template-columns: auto minmax(0, 1fr) auto auto; }
+.navigation {
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  row-gap: 5px;
+}
+.tap-modes {
+  grid-column: span 2;
+  justify-self: start;
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 5px;
+  background: var(--desk);
+}
+.tap-modes button { min-width: 54px; }
+.tap-modes button[aria-pressed="true"] {
+  color: var(--paper);
+  background: var(--green);
+}
 .arrow {
   min-width: 48px;
   min-height: 44px;
@@ -397,7 +424,7 @@ button:focus-visible, input:focus-visible, .paper:focus-visible {
   background: #f3f5ed;
   pointer-events: none;
 }
-.reader-controls:not([hidden]) ~ .reader-note { margin-bottom: 57px; }
+.reader-controls:not([hidden]) ~ .reader-note { margin-bottom: 110px; }
 
 @media (max-width: 600px) {
   .entry { padding-inline: max(17px, env(safe-area-inset-left)) max(17px, env(safe-area-inset-right)); }
