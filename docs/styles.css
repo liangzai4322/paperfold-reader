@@ -161,6 +161,16 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 
 .import-nav { display: flex; align-items: center; flex-wrap: wrap; }
+.import-tools { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 8px; }
+.import-tools select {
+  min-height: 44px;
+  padding: 0 6px;
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  background: var(--control);
+}
+.import-tools output { color: var(--muted); font-size: .8rem; }
+.import-tools output:empty { display: none; }
 
 .bookshelf {
   padding: clamp(16px, 4.5vw, 39px);

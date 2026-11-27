@@ -31,7 +31,7 @@ export function createCloudClient(connection) {
     const abort = new AbortController();
     const expiry = setTimeout(() => abort.abort(), 28000);
     try {
-      const headers = { Authorization: "Bearer " + connection.token };
+      const headers = connection.token ? { Authorization: "Bearer " + connection.token } : {};
       if (body) headers["Content-Type"] = "application/json";
       const response = await fetch(connection.url + apiPrefix + path, {
         method, headers, signal: abort.signal, credentials: "omit", redirect: "error",
@@ -53,6 +53,13 @@ export function createCloudClient(connection) {
 
   const bookPath = (id) => "/books/" + encodeURIComponent(id);
   return {
+    async pair(pin) {
+      const data = await request("/pair", "POST", { pin });
+      if (typeof data.token !== "string" || data.token.length < 32 || data.token.length > 256) {
+        throw new CloudError(502, "invalid_response");
+      }
+      return data.token;
+    },
     async list(after = "") {
       const data = await request("/books" + (after ? "?after=" + encodeURIComponent(after) : ""));
       if (!Array.isArray(data.books) || !data.books.every(validBook)

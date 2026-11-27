@@ -8,8 +8,8 @@
   <title>纸间</title>
   <link rel="icon" href="./icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon.png">
-  <link rel="stylesheet" href="./styles.css?v=6">
-  <script type="module" src="./js/app.js?v=6"></script>
+  <link rel="stylesheet" href="./styles.css?v=7">
+  <script type="module" src="./js/app.js?v=7"></script>
 </head>
 <body>
   <main id="entry" class="entry">
@@ -33,6 +33,14 @@
       <form id="edit" class="sheet">
         <h1><label for="manuscript">粘贴长文</label></h1>
         <textarea id="manuscript" name="manuscript" required spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"></textarea>
+        <div class="import-tools">
+          <select id="import-format" aria-label="导入格式">
+            <option value="plain">纯文本</option>
+            <option value="markdown">Markdown</option>
+          </select>
+          <button class="quiet" id="detect-format" type="button">识别格式</button>
+          <output id="format-status" role="status"></output>
+        </div>
         <div class="edit-actions">
           <div class="import-nav">
             <button class="quiet sample" id="sample" type="button">试翻几页</button>
@@ -53,8 +61,8 @@
       </header>
       <label for="cloud-server">服务器地址</label>
       <input id="cloud-server" type="url" required inputmode="url" autocapitalize="off" spellcheck="false" placeholder="https://…">
-      <label for="cloud-key">同步密钥</label>
-      <input id="cloud-key" type="password" required minlength="32" maxlength="256" autocomplete="off">
+      <label for="cloud-key">配对码或同步密钥</label>
+      <input id="cloud-key" type="password" required minlength="6" maxlength="256" autocomplete="off">
       <p class="cloud-status" id="cloud-status" role="status"></p>
       <footer>
         <button class="quiet" id="cloud-disconnect" type="button" hidden>断开</button>

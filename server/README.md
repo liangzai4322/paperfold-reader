@@ -16,9 +16,11 @@ handle /paperfold-api/* {
 
 `GET /paperfold-api/healthz` 用于检查服务可达性。部署后，在纸间首页点「云同步」，输入 HTTPS 服务器地址和同步密钥。首次连接会上传本机书架。正文按需下载，下载过的文章可以离线读。联网后会补传阅读进度。原系统只保留最近一篇，升级会自动迁移这一篇及其阅读进度。
 
+可以通过服务环境变量 `PAPERFOLD_PAIR_PIN` 设置六位数字的设备配对码。网页与安卓 1.2.1 支持输入配对码，服务验证后下发同步凭据。每个小时窗口限五次失败，次数保存在 SQLite。更换同步密钥后，已有设备需要重新连接。
+
 ## AI 导入
 
-`POST /paperfold-api/v1/books` 支持 `title`、`text`、`format`。标题可省略，正文必填。格式可为 `auto`、`markdown` 或 `plain`，默认 `auto`。JSON 请求最大 8 MiB。使用同一个 `Idempotency-Key` 重试同一篇文章时，服务会返回原来的书籍 ID。
+`POST /paperfold-api/v1/books` 支持 `title`、`text`、`format`。标题可省略，正文必填。新文章默认用 `plain` 保存和阅读。传 `auto` 会在打开文章时用设备上的解析器识别 Markdown。AI 先整理好的 Markdown 可显式传 `markdown`。JSON 请求最大 8 MiB。使用同一个 `Idempotency-Key` 重试同一篇文章时，服务会返回原来的书籍 ID。
 
 ```sh
 curl --fail-with-body "$PAPERFOLD_URL/paperfold-api/v1/books" \

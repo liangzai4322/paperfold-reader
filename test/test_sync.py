@@ -4,10 +4,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
 import unittest
+from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from server.paperfold_sync import BOOKS, ROOT, SyncServer
+from server.paperfold_sync import BOOKS, PAIR, PAIR_FAILURES, PAIR_WINDOW_MS, ROOT, SyncServer, milliseconds
 
 
 DEVICE = "test-device-" + "a" * 32
@@ -17,8 +18,8 @@ ANDROID = "https://appassets.androidplatform.net"
 
 
 @contextmanager
-def running_server(path):
-    with SyncServer(("127.0.0.1", 0), path, DEVICE, IMPORT) as service:
+def running_server(path, pair_pin=None):
+    with SyncServer(("127.0.0.1", 0), path, DEVICE, IMPORT, pair_pin=pair_pin) as service:
         worker = Thread(target=service.serve_forever, daemon=True)
         worker.start()
         try:
@@ -103,6 +104,37 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(request(base, Origin="https://elsewhere.example")[0], 403)
             self.assertEqual(request(base, ROOT + "/healthz", token=None)[1], {"ok": True})
             self.assertEqual(request(base, method="POST", token=IMPORT, data={"text": " "})[0], 400)
+
+    def test_omitting_format_keeps_new_imports_plain_and_retries_older_entries(self):
+        with running_server(self.path) as base:
+            latest = {"text": "# Raw Markdown syntax\n\n**Content**"}
+            created = request(base, method="POST", token=IMPORT, data=latest)
+            added = request(base, BOOKS + "/" + created[1]["id"])[1]
+            self.assertEqual((added["format"], added["text"]), ("plain", latest["text"]))
+            idem = {"Idempotency-Key": "older-markdown-book"}
+            legacy = request(base, method="POST", token=IMPORT, data={**latest, "format": "auto"}, **idem)
+            repeated = request(base, method="POST", token=IMPORT, data=latest, **idem)
+            self.assertEqual(repeated[:2], (200, legacy[1]))
+            self.assertEqual(request(base, BOOKS + "/" + legacy[1]["id"])[1]["format"], "auto")
+
+    def test_pairing_exchanges_the_code_for_a_device_token_and_is_rate_limited(self):
+        pin = "937162"
+        with running_server(self.path, pair_pin=pin) as base:
+            preflight = request(base, PAIR, "OPTIONS", None, Origin=ANDROID)
+            self.assertEqual(preflight[0], 204)
+            self.assertEqual(preflight[2]["Access-Control-Allow-Origin"], ANDROID)
+            result = request(base, PAIR, "POST", None, {"pin": pin}, Origin=WEB)
+            self.assertEqual(result[:2], (200, {"token": DEVICE}))
+            self.assertEqual(result[2]["Cache-Control"], "no-store")
+            self.assertEqual(request(base, token=pin)[0], 401)
+            for _ in range(PAIR_FAILURES):
+                self.assertEqual(request(base, PAIR, "POST", None, {"pin": "000000"})[0], 401)
+        with running_server(self.path, pair_pin=pin) as base:
+            self.assertEqual(request(base, PAIR, "POST", None, {"pin": pin})[0], 429)
+            self.assertEqual(request(base, token=DEVICE)[0], 200)
+            self.assertEqual(request(base, token=IMPORT)[0], 403)
+            with patch("server.paperfold_sync.milliseconds", return_value=milliseconds() + PAIR_WINDOW_MS + 1):
+                self.assertEqual(request(base, PAIR, "POST", None, {"pin": pin})[0], 200)
 
 
 if __name__ == "__main__":

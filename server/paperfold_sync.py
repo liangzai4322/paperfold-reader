@@ -15,7 +15,10 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 ROOT = "/paperfold-api"
 BOOKS = ROOT + "/v1/books"
+PAIR = ROOT + "/v1/pair"
 MAX_BODY = 8 * 1024 * 1024
+PAIR_WINDOW_MS = 60 * 60 * 1000
+PAIR_FAILURES = 5
 META = "id,title,format,bytes,created_at AS createdAt,pos_offset AS offset,progress_at AS progressAt"
 BOOK_ID = re.compile(r"[a-zA-Z0-9._-]{4,120}")
 FORMATS = ("plain", "markdown", "auto")
@@ -42,7 +45,7 @@ def number(value, limit):
 def book_fields(data):
     text = data.get("text")
     title = data.get("title")
-    format = data.get("format", "auto")
+    format = data.get("format", "plain")
     if not isinstance(text, str) or not text.strip() or format not in FORMATS:
         raise ApiError(400, "invalid_book")
     if title is None or title == "":
@@ -62,12 +65,16 @@ def book_fields(data):
 class SyncServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, path, sync_token, ingest_token, origins=DEFAULT_ORIGINS):
+    def __init__(self, address, path, sync_token, ingest_token, origins=DEFAULT_ORIGINS, pair_pin=None):
         if len(sync_token) < 32 or len(ingest_token) < 32 or sync_token == ingest_token:
             raise ValueError("Set distinct device and import tokens of at least 32 characters")
+        if pair_pin is not None and not re.fullmatch(r"[0-9]{6}", pair_pin):
+            raise ValueError("PAPERFOLD_PAIR_PIN must be six digits")
         self.path = path
         self.sync_digest = sha256(sync_token.encode()).digest()
         self.ingest_digest = sha256(ingest_token.encode()).digest()
+        self.pair_digest = sha256(pair_pin.encode()).digest() if pair_pin else None
+        self.pair_token = sync_token if pair_pin else None
         self.origins = set(origins)
         with self.database() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -78,6 +85,12 @@ class SyncServer(ThreadingHTTPServer):
                     pos_offset INTEGER NOT NULL DEFAULT 0, progress_at INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            if self.pair_digest:
+                db.execute("""
+                    CREATE TABLE IF NOT EXISTS pair_attempts (
+                        id INTEGER PRIMARY KEY, started_at INTEGER NOT NULL, failures INTEGER NOT NULL
+                    )
+                """)
         super().__init__(address, SyncRequest)
 
     @contextmanager
@@ -126,12 +139,12 @@ class SyncRequest(BaseHTTPRequestHandler):
             raise ApiError(403, "import_only")
         raise ApiError(401, "invalid_token")
 
-    def body(self):
+    def body(self, limit=MAX_BODY):
         try:
             size = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             raise ApiError(400, "invalid_length") from None
-        if size > MAX_BODY:
+        if size > limit:
             raise ApiError(413, "book_too_large")
         if size < 1 or self.headers.get_content_type() != "application/json":
             raise ApiError(400, "expected_json")
@@ -143,6 +156,29 @@ class SyncRequest(BaseHTTPRequestHandler):
         if not isinstance(data, dict):
             raise ApiError(400, "expected_object")
         return data
+
+    def pair_device(self):
+        if not self.server.pair_digest:
+            raise ApiError(404, "pairing_disabled")
+        pin = self.body(limit=256).get("pin")
+        if not isinstance(pin, str) or not re.fullmatch(r"[0-9]{6}", pin):
+            raise ApiError(400, "expected_pairing_pin")
+        now = milliseconds()
+        with self.server.database() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("SELECT started_at, failures FROM pair_attempts WHERE id=1").fetchone()
+            if row and now - row["started_at"] < PAIR_WINDOW_MS:
+                started_at, failures = row["started_at"], row["failures"]
+            else:
+                started_at, failures = now, 0
+            if failures >= PAIR_FAILURES:
+                raise ApiError(429, "pairing_rate_limited")
+            if compare_digest(sha256(pin.encode()).digest(), self.server.pair_digest):
+                return {"token": self.server.pair_token}
+            db.execute("""INSERT INTO pair_attempts (id,started_at,failures) VALUES (1,?,?)
+                          ON CONFLICT(id) DO UPDATE SET started_at=excluded.started_at, failures=excluded.failures""",
+                       (started_at, failures + 1))
+        raise ApiError(401, "invalid_pairing_pin")
 
     def list_books(self, query):
         after = parse_qs(query).get("after", [""])[0]
@@ -167,6 +203,8 @@ class SyncRequest(BaseHTTPRequestHandler):
             previous = db.execute(
                 "SELECT title,body,format FROM books WHERE id=?", (book_id,)
             ).fetchone()
+            if previous and "format" not in data:
+                format = previous["format"]
             if previous and tuple(previous) != (title, body, format):
                 raise ApiError(409, "book_id_conflict")
             if not previous:
@@ -195,10 +233,12 @@ class SyncRequest(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin not in self.server.origins:
             raise ApiError(403, "origin_not_allowed")
-        if method == "OPTIONS" and (path == BOOKS or path.startswith(BOOKS + "/")):
+        if method == "OPTIONS" and (path in (BOOKS, PAIR) or path.startswith(BOOKS + "/")):
             return 204, None
         if path == ROOT + "/healthz" and method == "GET":
             return 200, {"ok": True}
+        if path == PAIR and method == "POST":
+            return 200, self.pair_device()
         if path == BOOKS:
             self.require_token(method == "POST")
             if method == "GET":
@@ -250,7 +290,7 @@ def main():
     origins = tuple(origin.strip() for origin in os.getenv(
         "PAPERFOLD_ALLOWED_ORIGINS", ",".join(DEFAULT_ORIGINS)).split(",") if origin.strip())
     with SyncServer((args.host, args.port), args.db, os.getenv("PAPERFOLD_SYNC_TOKEN", ""),
-                    os.getenv("PAPERFOLD_INGEST_TOKEN", ""), origins) as server:
+                    os.getenv("PAPERFOLD_INGEST_TOKEN", ""), origins, os.getenv("PAPERFOLD_PAIR_PIN")) as server:
         print("Paperfold sync is listening on", server.server_address, flush=True)
         server.serve_forever()
 

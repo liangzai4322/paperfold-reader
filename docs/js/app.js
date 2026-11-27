@@ -2,12 +2,14 @@ import { createPager, normalizeText } from "./pagination.js";
 import { bindPageTurn } from "./page-turn.js?v=4";
 import { createBookStorage } from "./storage.js?v=6";
 import { readingText, titleFrom } from "./markdown.js?v=6";
-import { cloudAddress, createCloudClient, syncLibrary } from "./cloud.js?v=6";
+import { cloudAddress, createCloudClient, syncLibrary } from "./cloud.js?v=7";
 
 const byId = (id) => document.getElementById(id);
 const entry = byId("entry");
 const reader = byId("reader");
 const field = byId("manuscript");
+const importFormat = byId("import-format");
+const formatStatus = byId("format-status");
 const resume = byId("resume");
 const shelf = byId("bookshelf");
 const importer = byId("importer");
@@ -127,6 +129,9 @@ function status(message) {
 }
 
 function syncError(error) {
+  if (error.code === "invalid_pairing_pin") return "配对码不正确。";
+  if (error.code === "pairing_rate_limited") return "配对尝试过多，请稍后再试。";
+  if (error.code === "pairing_disabled" || error.code === "not_found") return "请检查服务器地址和版本。";
   return [401, 403].includes(error.status)
     ? "同步密钥或访问权限不正确。"
     : "暂时无法同步。恢复连接后会重试。";
@@ -398,19 +403,36 @@ function seek(tenths) {
   reflow(offset, { force: true, trackProgress: true });
 }
 
-field.addEventListener("input", () => field.setCustomValidity(""));
+function clearFormatStatus() {
+  field.setCustomValidity("");
+  formatStatus.textContent = "";
+}
+
+field.addEventListener("input", clearFormatStatus);
+importFormat.addEventListener("change", () => { formatStatus.textContent = ""; });
+byId("detect-format").addEventListener("click", () => {
+  if (!field.value.trim()) {
+    formatStatus.textContent = "请先粘贴正文。";
+    field.focus();
+    return;
+  }
+  const { format } = readingText(field.value, "auto");
+  importFormat.value = format;
+  formatStatus.textContent = format === "markdown" ? "已识别 Markdown" : "已选纯文本";
+});
 field.addEventListener("paste", (event) => {
   const text = event.clipboardData?.getData("text/plain");
   if (!text || text.length < 32_768) return;
   event.preventDefault();
   // Large clipboard payloads can stall the browser's default edit command.
   field.setRangeText(normalizeText(text), field.selectionStart, field.selectionEnd, "end");
-  field.setCustomValidity("");
+  clearFormatStatus();
 });
 byId("edit").addEventListener("submit", async (event) => {
   event.preventDefault();
   if (importing) return;
   const text = normalizeText(field.value);
+  const format = importFormat.value;
   if (!/\S/.test(text)) {
     field.setCustomValidity("请粘贴想读的文字。");
     field.reportValidity();
@@ -422,13 +444,15 @@ byId("edit").addEventListener("submit", async (event) => {
   try {
     await boot.catch(() => {});
     const id = globalThis.crypto?.randomUUID?.() ?? Date.now() + "-" + Math.random();
-    const rendered = readingText(text);
+    const rendered = readingText(text, format);
     const book = { id, source: rendered.source, format: rendered.format,
       title: titleFrom(rendered.text), createdAt: Date.now() };
     const position = { offset: 0, fontIndex: appearance.fontIndex };
     try {
       await storage.saveBook(book, position);
       field.value = "";
+      importFormat.value = "plain";
+      formatStatus.textContent = "";
       saved = { book, position };
       refreshShelf().catch(storageFailed);
       scheduleSync();
@@ -463,6 +487,7 @@ byId("cloud-toggle").addEventListener("click", () => {
 });
 byId("cloud-close").addEventListener("click", () => cloudDialog.close());
 cloudServer.addEventListener("input", () => cloudServer.setCustomValidity(""));
+cloudKey.addEventListener("input", () => cloudKey.setCustomValidity(""));
 byId("cloud-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const url = cloudAddress(cloudServer.value);
@@ -471,10 +496,17 @@ byId("cloud-form").addEventListener("submit", async (event) => {
     cloudServer.reportValidity();
     return;
   }
-  const candidate = { url, token: cloudKey.value.trim() };
+  const value = cloudKey.value.trim();
+  const pairing = /^[0-9]{6}$/.test(value);
+  if (!pairing && value.length < 32) {
+    cloudKey.setCustomValidity("请输入六位配对码或完整同步密钥。");
+    cloudKey.reportValidity();
+    return;
+  }
   cloudConnect.disabled = cloudDisconnect.disabled = true;
   try {
     if (syncJob) await syncJob;
+    const candidate = { url, token: pairing ? await createCloudClient({ url }).pair(value) : value };
     await createCloudClient(candidate).list();
     await storage.saveCloud(candidate);
     cloud = candidate;
