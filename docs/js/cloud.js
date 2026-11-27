@@ -1,4 +1,5 @@
 const apiPrefix = "/paperfold-api/v1";
+export const AUTO_DOWNLOAD_BYTES = 64 * 1024;
 const idPattern = /^[a-zA-Z0-9._-]{4,120}$/;
 const formats = new Set(["plain", "markdown", "auto"]);
 
@@ -21,12 +22,14 @@ export function cloudAddress(value) {
   return "";
 }
 
-function validBook(book) {
-  return book && typeof book.id === "string" && idPattern.test(book.id) && typeof book.title === "string" && formats.has(book.format)
-    && [book.bytes, book.createdAt, book.offset, book.progressAt].every((value) => Number.isSafeInteger(value) && value >= 0);
+function validBook(book, publicShelf) {
+  if (!book || typeof book.id !== "string" || !idPattern.test(book.id) || typeof book.title !== "string" || !formats.has(book.format)) return false;
+  const numbers = publicShelf ? [book.bytes, book.createdAt] : [book.bytes, book.createdAt, book.offset, book.progressAt];
+  return numbers.every((value) => Number.isSafeInteger(value) && value >= 0)
+    && (!publicShelf || book.archived === 0 || book.archived === 1);
 }
 
-export function createCloudClient(connection) {
+export function createCloudClient(connection, { publicShelf = false } = {}) {
   async function request(path, method = "GET", body) {
     const abort = new AbortController();
     const expiry = setTimeout(() => abort.abort(), 28000);
@@ -47,11 +50,12 @@ export function createCloudClient(connection) {
 
   async function record(path, method, body) {
     const book = await request(path, method, body);
-    if (!validBook(book)) throw new CloudError(502, "invalid_response");
+    if (!validBook(book, publicShelf)) throw new CloudError(502, "invalid_response");
     return book;
   }
 
-  const bookPath = (id) => "/books/" + encodeURIComponent(id);
+  const booksPath = publicShelf ? "/public/books" : "/books";
+  const bookPath = (id) => booksPath + "/" + encodeURIComponent(id);
   return {
     async pair(pin) {
       const data = await request("/pair", "POST", { pin });
@@ -60,9 +64,13 @@ export function createCloudClient(connection) {
       }
       return data.token;
     },
-    async list(after = "") {
-      const data = await request("/books" + (after ? "?after=" + encodeURIComponent(after) : ""));
-      if (!Array.isArray(data.books) || !data.books.every(validBook)
+    async list(after = "", archived = false) {
+      const query = new URLSearchParams();
+      if (after) query.set("after", after);
+      if (archived) query.set("archived", "1");
+      const search = query.toString();
+      const data = await request(booksPath + (search ? "?" + search : ""));
+      if (!Array.isArray(data.books) || !data.books.every((book) => validBook(book, publicShelf))
           || (data.next !== null && (typeof data.next !== "string" || !idPattern.test(data.next) || data.next <= after))) {
         throw new CloudError(502, "invalid_response");
       }
@@ -76,7 +84,11 @@ export function createCloudClient(connection) {
     put(book, meta) {
       return record(bookPath(book.id), "PUT", {
         text: book.source, title: meta.title, format: meta.format, createdAt: meta.createdAt,
+        publish: meta.pendingPublication || undefined,
       });
+    },
+    shelfAction(id, action) {
+      return record(bookPath(id) + "/shelf", "PATCH", { action });
     },
     progress(meta) {
       return record(bookPath(meta.id) + "/progress", "PATCH", {
@@ -93,7 +105,8 @@ export async function syncLibrary(storage, client, { pull }) {
     const local = await storage.getBook(meta.id);
     if (!local) continue;
     try {
-      const accepted = await client.put(local.book, meta);
+      let accepted = await client.put(local.book, meta);
+      if (meta.pendingPublication && !accepted.published) accepted = await client.shelfAction(meta.id, "publish");
       await storage.mergeRemote([accepted], true);
     } catch (error) {
       if (![400, 409, 413].includes(error.status)) throw error;

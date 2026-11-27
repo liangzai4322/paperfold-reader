@@ -8,15 +8,15 @@
   <title>纸间</title>
   <link rel="icon" href="./icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon.png">
-  <link rel="stylesheet" href="./styles.css?v=7">
-  <script type="module" src="./js/app.js?v=7"></script>
+  <link rel="stylesheet" href="./styles.css?v=8">
+  <script type="module" src="./js/app.js?v=8"></script>
 </head>
 <body>
   <main id="entry" class="entry">
     <header class="entry-bar">
       <div class="brand"><span class="bookmark" aria-hidden="true"></span>纸间</div>
       <div class="entry-actions">
-        <button class="quiet" id="cloud-toggle" type="button">云同步</button>
+        <button class="quiet" id="cloud-toggle" type="button">管理</button>
         <a class="quiet update-link" href="./native/update" data-native-update hidden>检查更新</a>
         <button class="quiet resume" id="resume" type="button" hidden>继续阅读 <span aria-hidden="true">↗</span></button>
       </div>
@@ -24,9 +24,13 @@
     <section class="bookshelf" id="bookshelf" hidden aria-labelledby="bookshelf-title">
       <header class="bookshelf-heading">
         <h1 id="bookshelf-title">书架</h1>
-        <button class="primary" id="new-book" type="button">导入</button>
+        <div class="entry-actions">
+          <button class="quiet" id="archive-toggle" type="button" hidden>归档</button>
+          <button class="primary" id="new-book" type="button">导入</button>
+        </div>
       </header>
       <ul id="book-list" class="book-list"></ul>
+      <p class="shelf-empty" id="shelf-empty" hidden></p>
     </section>
     <div class="manuscript" id="importer">
       <aside class="cover" aria-hidden="true"><div class="cover-rule"></div><div class="cover-mark"></div></aside>
@@ -46,7 +50,10 @@
             <button class="quiet sample" id="sample" type="button">试翻几页</button>
             <button class="quiet" id="cancel-import" type="button" hidden>回书架</button>
           </div>
-          <button class="primary" type="submit">开始阅读 <span aria-hidden="true">→</span></button>
+          <div class="import-nav">
+            <button class="primary" id="publish-book" type="submit" hidden>公开上传并阅读</button>
+            <button class="primary" type="submit">开始阅读 <span aria-hidden="true">→</span></button>
+          </div>
         </div>
       </form>
     </div>
@@ -56,7 +63,7 @@
   <dialog id="cloud-dialog" class="cloud-dialog" aria-labelledby="cloud-title">
     <form id="cloud-form">
       <header>
-        <h2 id="cloud-title">云同步</h2>
+        <h2 id="cloud-title">管理书架</h2>
         <button class="quiet" id="cloud-close" type="button">关闭</button>
       </header>
       <label for="cloud-server">服务器地址</label>
@@ -66,7 +73,7 @@
       <p class="cloud-status" id="cloud-status" role="status"></p>
       <footer>
         <button class="quiet" id="cloud-disconnect" type="button" hidden>断开</button>
-        <button class="primary" id="cloud-connect" type="submit">连接并同步</button>
+        <button class="primary" id="cloud-connect" type="submit">配对并同步</button>
       </footer>
     </form>
   </dialog>

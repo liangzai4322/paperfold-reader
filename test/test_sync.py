@@ -1,5 +1,6 @@
 from contextlib import contextmanager
 import json
+import sqlite3
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from threading import Thread
@@ -8,7 +9,9 @@ from unittest.mock import patch
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
-from server.paperfold_sync import BOOKS, PAIR, PAIR_FAILURES, PAIR_WINDOW_MS, ROOT, SyncServer, milliseconds
+from server.paperfold_sync import (
+    ARCHIVE_AFTER_MS, BOOKS, PAIR, PAIR_FAILURES, PAIR_WINDOW_MS, PUBLIC_BOOKS, ROOT, SyncServer, milliseconds,
+)
 
 
 DEVICE = "test-device-" + "a" * 32
@@ -18,8 +21,9 @@ ANDROID = "https://appassets.androidplatform.net"
 
 
 @contextmanager
-def running_server(path, pair_pin=None):
-    with SyncServer(("127.0.0.1", 0), path, DEVICE, IMPORT, pair_pin=pair_pin) as service:
+def running_server(path, pair_pin=None, public_shelf=False):
+    with SyncServer(("127.0.0.1", 0), path, DEVICE, IMPORT,
+                    pair_pin=pair_pin, public_shelf=public_shelf) as service:
         worker = Thread(target=service.serve_forever, daemon=True)
         worker.start()
         try:
@@ -135,6 +139,59 @@ class SyncTests(unittest.TestCase):
             self.assertEqual(request(base, token=IMPORT)[0], 403)
             with patch("server.paperfold_sync.milliseconds", return_value=milliseconds() + PAIR_WINDOW_MS + 1):
                 self.assertEqual(request(base, PAIR, "POST", None, {"pin": pin})[0], 200)
+
+
+    def test_public_shelf_needs_explicit_publication_after_migration(self):
+        with sqlite3.connect(self.path) as db:
+            db.execute("""CREATE TABLE books (
+                id TEXT PRIMARY KEY, title TEXT NOT NULL, body TEXT NOT NULL, format TEXT NOT NULL,
+                bytes INTEGER NOT NULL, created_at INTEGER NOT NULL, pos_offset INTEGER NOT NULL DEFAULT 0,
+                progress_at INTEGER NOT NULL DEFAULT 0
+            )""")
+            db.execute("INSERT INTO books VALUES ('older-private', 'Old', 'private', 'plain', 7, 1, 2, 3)")
+        with running_server(self.path) as base:
+            self.assertEqual(request(base, PUBLIC_BOOKS, token=None)[0], 404)
+        with running_server(self.path, public_shelf=True) as base:
+            self.assertEqual(request(base, PUBLIC_BOOKS, token=None)[1]["books"], [])
+            self.assertEqual(request(base, PUBLIC_BOOKS + "/older-private", token=None)[0], 404)
+            self.assertEqual(request(base, BOOKS + "/older-private")[1]["offset"], 2)
+            action = BOOKS + "/older-private/shelf"
+            self.assertEqual(request(base, action, "PATCH", None, {"action": "publish"})[0], 401)
+            self.assertEqual(request(base, action, "PATCH", IMPORT, {"action": "publish"})[0], 403)
+            self.assertEqual(request(base, action, "PATCH", DEVICE, {"action": "publish"})[0], 200)
+            code, body, _ = request(base, PUBLIC_BOOKS + "/older-private", token=None, Origin=WEB)
+            self.assertEqual((code, body["text"]), (200, "private"))
+            self.assertNotIn("offset", body)
+            self.assertNotIn("progressAt", body)
+
+    def test_public_shelf_activity_and_archive_keep_the_book_readable(self):
+        upload_time = milliseconds()
+        clock = "server.paperfold_sync.milliseconds"
+        active = PUBLIC_BOOKS
+        archived = PUBLIC_BOOKS + "?archived=1"
+        with running_server(self.path, public_shelf=True) as base:
+            body = {"text": "A book for the shelf"}
+            self.assertEqual(request(base, method="POST", token=None, data=body)[0], 401)
+            with patch(clock, return_value=upload_time):
+                code, book, _ = request(base, method="POST", token=IMPORT, data=body)
+            self.assertEqual(code, 201)
+            public_book = PUBLIC_BOOKS + "/" + book["id"]
+            action = BOOKS + "/" + book["id"] + "/shelf"
+            with patch(clock, return_value=upload_time + ARCHIVE_AFTER_MS - 1):
+                self.assertEqual(len(request(base, active, token=None)[1]["books"]), 1)
+                self.assertEqual(request(base, public_book, token=None)[0], 200)
+            with patch(clock, return_value=upload_time + ARCHIVE_AFTER_MS):
+                self.assertEqual(request(base, active, token=None)[1]["books"], [])
+                self.assertEqual(len(request(base, archived, token=None)[1]["books"]), 1)
+                self.assertEqual(request(base, action, "PATCH", DEVICE, {"action": "read"})[1]["archived"], 1)
+                self.assertEqual(request(base, action, "PATCH", DEVICE, {"action": "restore"})[1]["archived"], 0)
+            with patch(clock, return_value=upload_time + 2 * ARCHIVE_AFTER_MS - 1):
+                self.assertEqual(request(base, action, "PATCH", DEVICE, {"action": "read"})[1]["archived"], 0)
+            with patch(clock, return_value=upload_time + 2 * ARCHIVE_AFTER_MS):
+                self.assertEqual(len(request(base, active, token=None)[1]["books"]), 1)
+                self.assertEqual(request(base, action, "PATCH", DEVICE, {"action": "archive"})[1]["archived"], 1)
+                self.assertEqual(request(base, public_book, token=None)[1]["text"], body["text"])
+                self.assertEqual(request(base, active, token=None)[1]["books"], [])
 
 
 if __name__ == "__main__":

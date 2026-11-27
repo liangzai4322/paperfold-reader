@@ -1,8 +1,8 @@
 import { createPager, normalizeText } from "./pagination.js";
 import { bindPageTurn } from "./page-turn.js?v=4";
-import { createBookStorage } from "./storage.js?v=6";
+import { createBookStorage } from "./storage.js?v=7";
 import { readingText, titleFrom } from "./markdown.js?v=6";
-import { cloudAddress, createCloudClient, syncLibrary } from "./cloud.js?v=7";
+import { AUTO_DOWNLOAD_BYTES, cloudAddress, createCloudClient, syncLibrary } from "./cloud.js?v=8";
 
 const byId = (id) => document.getElementById(id);
 const entry = byId("entry");
@@ -14,6 +14,10 @@ const resume = byId("resume");
 const shelf = byId("bookshelf");
 const importer = byId("importer");
 const bookList = byId("book-list");
+const shelfEmpty = byId("shelf-empty");
+const shelfTitle = byId("bookshelf-title");
+const archiveToggle = byId("archive-toggle");
+const publishBook = byId("publish-book");
 const entryNote = byId("entry-note");
 const cloudDialog = byId("cloud-dialog");
 const cloudServer = byId("cloud-server");
@@ -46,6 +50,9 @@ const progress = byId("progress");
 const percentage = byId("position-label");
 const readerNote = byId("reader-note");
 const storage = createBookStorage(globalThis.indexedDB);
+const officialCloudUrl = "https://liangzai666.com";
+const publicClient = ["https://liangzai4322.github.io", "https://appassets.androidplatform.net", officialCloudUrl]
+  .includes(location.origin) ? createCloudClient({ url: officialCloudUrl }, { publicShelf: true }) : null;
 const fontSizes = [16, 18, 21, 24, 28];
 const defaultAppearance = { fontIndex: 1, typeface: "system", theme: "paper" };
 const defaultPosition = { offset: 0, fontIndex: defaultAppearance.fontIndex };
@@ -60,6 +67,11 @@ let appearanceChanged = false;
 let layoutFrame = 0;
 let cancelWarmup = () => {};
 let catalog = [];
+let publicCatalog = [];
+let publicDownloads = new Set();
+let publicRequest = 0;
+let showingArchive = false;
+const downloads = new Map();
 let cloud;
 let syncJob;
 let syncTimer;
@@ -94,18 +106,33 @@ function storageFailed() {
   readerNote.hidden = false;
 }
 
+function hasShelf() {
+  return Boolean(publicClient || catalog.length);
+}
+
+function managesPublicShelf() {
+  return Boolean(publicClient && cloud?.url === officialCloudUrl);
+}
+
 function setShelfVisible(show) {
   shelf.hidden = !show;
   importer.hidden = show;
-  byId("cancel-import").hidden = !catalog.length;
+  byId("cancel-import").hidden = !hasShelf();
 }
 
-async function refreshShelf() {
-  const firstBooks = !catalog.length;
-  catalog = await storage.listBooks();
-  const items = catalog.map((book) => {
+function renderShelf() {
+  const visitor = publicClient && !cloud;
+  const books = new Map();
+  for (const book of catalog) {
+    if (Boolean(book.archived) === showingArchive && !(visitor && book.published)) books.set(book.id, book);
+  }
+  if (visitor) {
+    for (const book of publicCatalog) books.set(book.id, { ...book, cached: publicDownloads.has(book.id) });
+  }
+  const items = [...books.values()].sort((first, second) => second.createdAt - first.createdAt).map((book) => {
     const row = document.createElement("li");
     const open = document.createElement("button");
+    open.className = "book-open";
     open.type = "button";
     open.dataset.bookId = book.id;
     const name = document.createElement("span");
@@ -113,19 +140,109 @@ async function refreshShelf() {
     name.textContent = book.title;
     const progress = document.createElement("span");
     progress.className = "book-progress";
-    progress.textContent = book.pendingUpload && cloud ? "待同步" : !book.cached ? "云端" : book.offset ? "读过" : "";
+    if (book.pendingPublication && cloud) progress.textContent = "待公开";
+    else if (book.pendingUpload && cloud) progress.textContent = "待同步";
+    else if (!book.cached && book.bytes > AUTO_DOWNLOAD_BYTES) progress.textContent = "下载并阅读";
+    else if (book.offset) progress.textContent = "读过";
     open.append(name, progress);
     row.append(open);
+    if (managesPublicShelf() && !book.pendingUpload) {
+      const action = document.createElement("button");
+      action.className = "quiet book-action";
+      action.type = "button";
+      action.dataset.shelfBook = book.id;
+      action.dataset.shelfAction = !book.published ? "publish" : book.archived ? "restore" : "archive";
+      action.textContent = { publish: "公开上架", restore: "恢复到书架", archive: "归档" }[action.dataset.shelfAction];
+      action.setAttribute("aria-label", action.textContent + "《" + book.title + "》");
+      row.append(action);
+    }
     return row;
   });
   bookList.replaceChildren(...items);
-  byId("cancel-import").hidden = !catalog.length;
-  if (firstBooks && catalog.length && !field.value && !entry.hidden) setShelfVisible(true);
+  shelfTitle.textContent = showingArchive ? "归档" : "书架";
+  archiveToggle.textContent = showingArchive ? "回书架" : "归档";
+  archiveToggle.hidden = !(visitor || managesPublicShelf());
+  publishBook.hidden = !managesPublicShelf();
+  shelfEmpty.textContent = showingArchive ? "归档里还没有书。" : "书架上还没有书。";
+  shelfEmpty.hidden = items.length > 0;
+  byId("cancel-import").hidden = !hasShelf();
+}
+
+async function refreshShelf() {
+  const firstBooks = !catalog.length;
+  catalog = await storage.listBooks();
+  renderShelf();
+  if (!publicClient && firstBooks && catalog.length && !field.value && !entry.hidden) setShelfVisible(true);
+}
+
+function downloadBook(client, id, isPublic) {
+  const key = (isPublic ? "public/" : cloud.url + "/") + id;
+  if (downloads.has(key)) return downloads.get(key);
+  const connection = cloud;
+  const job = client.get(id).then(async (book) => {
+    if (isPublic) {
+      await storage.cachePublicBody(book);
+      publicDownloads.add(id);
+    } else if (connection === cloud) {
+      await storage.cacheRemote(book);
+    }
+    return book;
+  }).finally(() => downloads.delete(key));
+  downloads.set(key, job);
+  return job;
+}
+
+async function cacheSmallBooks(books, client, isPublic, current) {
+  let downloaded = false;
+  for (const book of books) {
+    if (document.hidden || !current()) break;
+    if (book.bytes > AUTO_DOWNLOAD_BYTES || (isPublic ? publicDownloads.has(book.id) : book.cached)) continue;
+    try {
+      await downloadBook(client, book.id, isPublic);
+      downloaded = true;
+    } catch {
+      break;
+    }
+  }
+  if (downloaded && current() && !entry.hidden) {
+    if (isPublic) renderShelf();
+    else await refreshShelf();
+  }
+}
+
+async function refreshPublicShelf() {
+  if (!publicClient || cloud) return;
+  const request = ++publicRequest;
+  const archived = showingArchive;
+  const isCurrent = () => request === publicRequest && !cloud && archived === showingArchive;
+  try {
+    const [cached, ids] = await Promise.all([storage.loadPublicShelf(archived), storage.listPublicDownloads()]);
+    if (!isCurrent()) return;
+    publicCatalog = cached || [];
+    publicDownloads = new Set(ids);
+    renderShelf();
+    const books = [];
+    let after = "";
+    do {
+      const page = await publicClient.list(after, archived);
+      if (!isCurrent()) return;
+      books.push(...page.books);
+      after = page.next;
+    } while (after);
+    publicCatalog = books;
+    renderShelf();
+    await storage.savePublicShelf(archived, books);
+    if (!isCurrent()) return;
+    status("");
+    await cacheSmallBooks(books, publicClient, true, isCurrent);
+  } catch {
+    if (isCurrent()) status("暂时无法刷新公开书架。已下载的书仍可阅读。");
+  }
 }
 
 function status(message) {
   cloudStatus.textContent = message;
-  entryNote.textContent = message || "文章和进度保存在本机。";
+  entryNote.textContent = message;
 }
 
 function syncError(error) {
@@ -146,8 +263,16 @@ async function syncNow() {
       const pull = Date.now() >= nextPullAt;
       const deferred = await syncLibrary(storage, client, { pull });
       if (pull) nextPullAt = Date.now() + 30000;
-      if (!entry.hidden) await refreshShelf();
-      status(deferred ? "同步完成，部分过长或冲突的文章保留在本机。" : "云端已同步");
+      if (!entry.hidden) {
+        await refreshShelf();
+        if (pull) {
+          const connection = cloud;
+          const archived = showingArchive;
+          const books = catalog.filter((book) => Boolean(book.archived) === archived);
+          cacheSmallBooks(books, client, false, () => cloud === connection && showingArchive === archived).catch(storageFailed);
+        }
+      }
+      status(deferred ? "部分文章等待同步，请检查文章大小或上传状态。" : "云端已同步");
     } catch (error) {
       status(syncError(error));
     } finally {
@@ -158,6 +283,10 @@ async function syncNow() {
 }
 
 function refreshCloud() {
+  if (!cloud) {
+    refreshPublicShelf();
+    return;
+  }
   nextPullAt = 0;
   scheduleSync(0);
 }
@@ -175,10 +304,17 @@ async function readBook(id) {
   if (loadingBook) return;
   loadingBook = true;
   try {
+    const published = !cloud && publicCatalog.find((book) => book.id === id);
+    if (published) {
+      const body = await storage.getPublicBody(id);
+      const source = body ?? (await downloadBook(publicClient, id, true)).text;
+      openReader({ book: { ...published, source } }, false);
+      return;
+    }
+    const client = cloud && createCloudClient(cloud);
     let record = await storage.getBook(id);
-    if (!record && cloud) {
-      const remote = await createCloudClient(cloud).get(id);
-      await storage.cacheRemote(remote);
+    if (!record && client) {
+      await downloadBook(client, id, false);
       record = await storage.getBook(id);
     }
     if (!record) {
@@ -188,9 +324,14 @@ async function readBook(id) {
     await storage.rememberBook(id);
     saved = record;
     openReader(record);
+    const item = catalog.find((book) => book.id === id);
+    if (client && item?.published && !item.archived) {
+      client.shelfAction(id, "read").catch(() => {});
+    }
     scheduleSync();
   } catch (error) {
-    status(syncError(error));
+    if (error.code === "book_not_found") status("这本书现在无法打开，请刷新书架。");
+    else status(syncError(error));
   } finally {
     loadingBook = false;
   }
@@ -385,7 +526,7 @@ function openEditor() {
   reader.hidden = true;
   entry.hidden = false;
   applyAppearance();
-  setShelfVisible(catalog.length > 0);
+  setShelfVisible(hasShelf());
   refreshShelf().catch(storageFailed);
   refreshCloud();
 }
@@ -433,6 +574,7 @@ byId("edit").addEventListener("submit", async (event) => {
   if (importing) return;
   const text = normalizeText(field.value);
   const format = importFormat.value;
+  const publish = event.submitter === publishBook && managesPublicShelf();
   if (!/\S/.test(text)) {
     field.setCustomValidity("请粘贴想读的文字。");
     field.reportValidity();
@@ -449,7 +591,7 @@ byId("edit").addEventListener("submit", async (event) => {
       title: titleFrom(rendered.text), createdAt: Date.now() };
     const position = { offset: 0, fontIndex: appearance.fontIndex };
     try {
-      await storage.saveBook(book, position);
+      await storage.saveBook(book, position, publish);
       field.value = "";
       importFormat.value = "plain";
       formatStatus.textContent = "";
@@ -474,14 +616,37 @@ byId("new-book").addEventListener("click", () => {
   field.focus();
 });
 byId("cancel-import").addEventListener("click", () => setShelfVisible(true));
-bookList.addEventListener("click", (event) => {
-  const button = event.target.closest("[data-book-id]");
-  if (button) readBook(button.dataset.bookId);
+archiveToggle.addEventListener("click", () => {
+  showingArchive = !showingArchive;
+  publicCatalog = [];
+  renderShelf();
+  refreshCloud();
+});
+bookList.addEventListener("click", async (event) => {
+  const button = event.target.closest("[data-book-id], [data-shelf-action]");
+  if (!button) return;
+  if (button.dataset.bookId) {
+    readBook(button.dataset.bookId);
+    return;
+  }
+  if (!managesPublicShelf()) return;
+  button.disabled = true;
+  const action = button.dataset.shelfAction;
+  try {
+    if (action === "publish" && !window.confirm("这本书的标题和正文将公开。确定上架？")) return;
+    const book = await createCloudClient(cloud).shelfAction(button.dataset.shelfBook, action);
+    await storage.mergeRemote([book]);
+    await refreshShelf();
+  } catch (error) {
+    status(syncError(error));
+  } finally {
+    button.disabled = false;
+  }
 });
 
 byId("cloud-toggle").addEventListener("click", () => {
-  cloudServer.value = cloud?.url || "";
-  cloudKey.value = cloud?.token || "";
+  cloudServer.value = cloud?.url || (publicClient ? officialCloudUrl : "");
+  cloudKey.value = "";
   cloudDisconnect.hidden = !cloud;
   cloudDialog.showModal();
 });
@@ -510,6 +675,8 @@ byId("cloud-form").addEventListener("submit", async (event) => {
     await createCloudClient(candidate).list();
     await storage.saveCloud(candidate);
     cloud = candidate;
+    showingArchive = false;
+    publicCatalog = [];
     nextPullAt = 0;
     cloudDisconnect.hidden = false;
     await syncNow();
@@ -525,10 +692,12 @@ cloudDisconnect.addEventListener("click", async () => {
     if (syncJob) await syncJob;
     await storage.saveCloud(null);
     cloud = null;
+    showingArchive = false;
     cloudKey.value = "";
     cloudDisconnect.hidden = true;
     status("");
     await refreshShelf();
+    refreshPublicShelf();
   } catch {
     storageFailed();
   } finally {
@@ -626,7 +795,8 @@ boot.then(async ([record, storedAppearance, connection, mode]) => {
   }
   if (connection?.url && connection?.token) cloud = connection;
   await refreshShelf();
-  scheduleSync(0);
+  if (publicClient && !field.value && !entry.hidden) setShelfVisible(true);
+  refreshCloud();
 }).catch(storageFailed);
 
 setInterval(() => { if (!document.hidden) syncNow(); }, 30000);

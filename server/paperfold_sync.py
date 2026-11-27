@@ -15,11 +15,20 @@ from uuid import NAMESPACE_URL, uuid4, uuid5
 
 ROOT = "/paperfold-api"
 BOOKS = ROOT + "/v1/books"
+PUBLIC_BOOKS = ROOT + "/v1/public/books"
 PAIR = ROOT + "/v1/pair"
 MAX_BODY = 8 * 1024 * 1024
 PAIR_WINDOW_MS = 60 * 60 * 1000
 PAIR_FAILURES = 5
-META = "id,title,format,bytes,created_at AS createdAt,pos_offset AS offset,progress_at AS progressAt"
+ARCHIVE_AFTER_MS = 72 * 60 * 60 * 1000
+ARCHIVED = "(published_at IS NOT NULL AND (manual_archive = 1 OR max(published_at,shelf_activity_at) <= :cutoff))"
+PUBLIC_META = f"id,title,format,bytes,created_at AS createdAt,{ARCHIVED} AS archived"
+OWNER_META = f"{PUBLIC_META},pos_offset AS offset,progress_at AS progressAt,published_at IS NOT NULL AS published"
+SHELF_COLUMNS = {
+    "published_at": "INTEGER",
+    "manual_archive": "INTEGER NOT NULL DEFAULT 0",
+    "shelf_activity_at": "INTEGER NOT NULL DEFAULT 0",
+}
 BOOK_ID = re.compile(r"[a-zA-Z0-9._-]{4,120}")
 FORMATS = ("plain", "markdown", "auto")
 DEFAULT_ORIGINS = (
@@ -65,7 +74,8 @@ def book_fields(data):
 class SyncServer(ThreadingHTTPServer):
     daemon_threads = True
 
-    def __init__(self, address, path, sync_token, ingest_token, origins=DEFAULT_ORIGINS, pair_pin=None):
+    def __init__(self, address, path, sync_token, ingest_token, origins=DEFAULT_ORIGINS,
+                 pair_pin=None, public_shelf=False):
         if len(sync_token) < 32 or len(ingest_token) < 32 or sync_token == ingest_token:
             raise ValueError("Set distinct device and import tokens of at least 32 characters")
         if pair_pin is not None and not re.fullmatch(r"[0-9]{6}", pair_pin):
@@ -76,6 +86,7 @@ class SyncServer(ThreadingHTTPServer):
         self.pair_digest = sha256(pair_pin.encode()).digest() if pair_pin else None
         self.pair_token = sync_token if pair_pin else None
         self.origins = set(origins)
+        self.public_shelf = public_shelf
         with self.database() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
@@ -85,6 +96,10 @@ class SyncServer(ThreadingHTTPServer):
                     pos_offset INTEGER NOT NULL DEFAULT 0, progress_at INTEGER NOT NULL DEFAULT 0
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(books)")}
+            for name, definition in SHELF_COLUMNS.items():
+                if name not in columns:
+                    db.execute(f"ALTER TABLE books ADD COLUMN {name} {definition}")
             if self.pair_digest:
                 db.execute("""
                     CREATE TABLE IF NOT EXISTS pair_attempts (
@@ -180,24 +195,45 @@ class SyncRequest(BaseHTTPRequestHandler):
                        (started_at, failures + 1))
         raise ApiError(401, "invalid_pairing_pin")
 
-    def list_books(self, query):
-        after = parse_qs(query).get("after", [""])[0]
+    def list_books(self, query, public=False):
+        parameters = parse_qs(query)
+        after = parameters.get("after", [""])[0]
         if after and not BOOK_ID.fullmatch(after):
             raise ApiError(400, "invalid_cursor")
+        where = "id>:after"
+        values = {"after": after, "cutoff": milliseconds() - ARCHIVE_AFTER_MS}
+        columns = OWNER_META
+        if public:
+            archived = parameters.get("archived", ["0"])[0]
+            if archived not in ("0", "1"):
+                raise ApiError(400, "invalid_shelf_view")
+            columns = PUBLIC_META
+            where += f" AND published_at IS NOT NULL AND {ARCHIVED}=:archived"
+            values["archived"] = int(archived)
         with self.server.database() as db:
-            rows = db.execute(f"SELECT {META} FROM books WHERE id>? ORDER BY id LIMIT 101", (after,)).fetchall()
+            rows = db.execute(f"SELECT {columns} FROM books WHERE {where} ORDER BY id LIMIT 101", values).fetchall()
         return {"books": [dict(row) for row in rows[:100]], "next": rows[99]["id"] if len(rows) > 100 else None}
 
-    def get_book(self, book_id):
-        with self.server.database() as db:
-            row = db.execute(f"SELECT {META}, body AS text FROM books WHERE id=?", (book_id,)).fetchone()
+    def select_book(self, db, book_id, *, public=False, include_body=False):
+        columns = PUBLIC_META if public else OWNER_META
+        if include_body:
+            columns += ",body AS text"
+        where = "id=:id AND published_at IS NOT NULL" if public else "id=:id"
+        row = db.execute(f"SELECT {columns} FROM books WHERE {where}", {
+            "id": book_id, "cutoff": milliseconds() - ARCHIVE_AFTER_MS,
+        }).fetchone()
         if row is None:
             raise ApiError(404, "book_not_found")
         return dict(row)
 
-    def put_book(self, book_id, data):
+    def get_book(self, book_id, public=False):
+        with self.server.database() as db:
+            return self.select_book(db, book_id, public=public, include_body=True)
+
+    def put_book(self, book_id, data, *, publish=False):
         title, body, format, size = book_fields(data)
-        created_at = number(data.get("createdAt", milliseconds()), 2**53 - 1)
+        now = milliseconds()
+        created_at = number(data.get("createdAt", now), 2**53 - 1)
         with self.server.database() as db:
             db.execute("BEGIN IMMEDIATE")
             previous = db.execute(
@@ -208,24 +244,47 @@ class SyncRequest(BaseHTTPRequestHandler):
             if previous and tuple(previous) != (title, body, format):
                 raise ApiError(409, "book_id_conflict")
             if not previous:
-                db.execute("INSERT INTO books (id,title,body,format,bytes,created_at) VALUES (?,?,?,?,?,?)",
-                           (book_id, title, body, format, size, created_at))
-            row = db.execute(f"SELECT {META} FROM books WHERE id=?", (book_id,)).fetchone()
-        return (200 if previous else 201), dict(row)
+                db.execute("""INSERT INTO books (id,title,body,format,bytes,created_at,published_at)
+                              VALUES (?,?,?,?,?,?,?)""",
+                           (book_id, title, body, format, size, created_at, now if publish else None))
+            return (200 if previous else 201), self.select_book(db, book_id)
 
     def update_progress(self, book_id, data):
         offset = number(data.get("offset"), MAX_BODY)
         updated = number(data.get("progressAt"), 2**53 - 1)
+        now = milliseconds()
         with self.server.database() as db:
             db.execute(
-                """UPDATE books SET pos_offset=?,progress_at=? WHERE id=?
-                   AND (progress_at < ? OR (progress_at = ? AND pos_offset < ?))""",
-                (offset, updated, book_id, updated, updated, offset),
+                f"""UPDATE books SET pos_offset=:offset,progress_at=:updated,
+                       shelf_activity_at=CASE WHEN published_at IS NOT NULL AND NOT {ARCHIVED}
+                                              THEN :now ELSE shelf_activity_at END
+                    WHERE id=:id
+                    AND (progress_at < :updated OR (progress_at = :updated AND pos_offset < :offset))""",
+                {"id": book_id, "offset": offset, "updated": updated,
+                 "now": now, "cutoff": now - ARCHIVE_AFTER_MS},
             )
-            row = db.execute(f"SELECT {META} FROM books WHERE id=?", (book_id,)).fetchone()
-        if row is None:
-            raise ApiError(404, "book_not_found")
-        return dict(row)
+            return self.select_book(db, book_id)
+
+    def update_shelf(self, book_id, data):
+        action = data.get("action")
+        now = milliseconds()
+        values = {"id": book_id, "now": now, "cutoff": now - ARCHIVE_AFTER_MS}
+        if action == "publish":
+            update = "published_at=:now WHERE id=:id AND published_at IS NULL"
+        elif action == "archive":
+            update = "manual_archive=1 WHERE id=:id AND published_at IS NOT NULL"
+        elif action == "restore":
+            update = "manual_archive=0,shelf_activity_at=:now WHERE id=:id AND published_at IS NOT NULL"
+        elif action == "read":
+            update = f"shelf_activity_at=:now WHERE id=:id AND published_at IS NOT NULL AND NOT {ARCHIVED}"
+        else:
+            raise ApiError(400, "invalid_shelf_action")
+        with self.server.database() as db:
+            db.execute(f"UPDATE books SET {update}", values)
+            book = self.select_book(db, book_id)
+            if not book["published"]:
+                raise ApiError(409, "book_not_published")
+            return book
 
     def route(self):
         target = urlsplit(self.path)
@@ -233,12 +292,20 @@ class SyncRequest(BaseHTTPRequestHandler):
         origin = self.headers.get("Origin")
         if origin and origin not in self.server.origins:
             raise ApiError(403, "origin_not_allowed")
-        if method == "OPTIONS" and (path in (BOOKS, PAIR) or path.startswith(BOOKS + "/")):
+        if method == "OPTIONS" and (path in (BOOKS, PUBLIC_BOOKS, PAIR)
+                                    or path.startswith((BOOKS + "/", PUBLIC_BOOKS + "/"))):
             return 204, None
         if path == ROOT + "/healthz" and method == "GET":
             return 200, {"ok": True}
         if path == PAIR and method == "POST":
             return 200, self.pair_device()
+        if self.server.public_shelf and method == "GET":
+            if path == PUBLIC_BOOKS:
+                return 200, self.list_books(target.query, public=True)
+            if path.startswith(PUBLIC_BOOKS + "/"):
+                book_id = path[len(PUBLIC_BOOKS) + 1:]
+                if BOOK_ID.fullmatch(book_id):
+                    return 200, self.get_book(book_id, public=True)
         if path == BOOKS:
             self.require_token(method == "POST")
             if method == "GET":
@@ -248,7 +315,7 @@ class SyncRequest(BaseHTTPRequestHandler):
                 if key and (len(key) > 160 or not key.isascii()):
                     raise ApiError(400, "invalid_idempotency_key")
                 book_id = str(uuid5(NAMESPACE_URL, "paperfold-import:" + key) if key else uuid4())
-                status, book = self.put_book(book_id, self.body())
+                status, book = self.put_book(book_id, self.body(), publish=self.server.public_shelf)
                 return status, {"id": book["id"], "title": book["title"]}
         if path.startswith(BOOKS + "/"):
             self.require_token(False)
@@ -259,9 +326,17 @@ class SyncRequest(BaseHTTPRequestHandler):
                     if method == "GET":
                         return 200, self.get_book(book_id)
                     if method == "PUT":
-                        return self.put_book(book_id, self.body())
+                        data = self.body()
+                        publish = data.get("publish", False)
+                        if type(publish) is not bool:
+                            raise ApiError(400, "invalid_publication")
+                        if publish and not self.server.public_shelf:
+                            raise ApiError(409, "public_shelf_disabled")
+                        return self.put_book(book_id, data, publish=publish)
                 if pieces[1:] == ["progress"] and method == "PATCH":
                     return 200, self.update_progress(book_id, self.body())
+                if self.server.public_shelf and pieces[1:] == ["shelf"] and method == "PATCH":
+                    return 200, self.update_shelf(book_id, self.body(limit=256))
         raise ApiError(404, "not_found")
 
     def dispatch(self):
@@ -280,7 +355,7 @@ class SyncRequest(BaseHTTPRequestHandler):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Private bookshelf sync API")
+    parser = argparse.ArgumentParser(description="Paperfold bookshelf API")
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8794)
@@ -290,7 +365,8 @@ def main():
     origins = tuple(origin.strip() for origin in os.getenv(
         "PAPERFOLD_ALLOWED_ORIGINS", ",".join(DEFAULT_ORIGINS)).split(",") if origin.strip())
     with SyncServer((args.host, args.port), args.db, os.getenv("PAPERFOLD_SYNC_TOKEN", ""),
-                    os.getenv("PAPERFOLD_INGEST_TOKEN", ""), origins, os.getenv("PAPERFOLD_PAIR_PIN")) as server:
+                    os.getenv("PAPERFOLD_INGEST_TOKEN", ""), origins, os.getenv("PAPERFOLD_PAIR_PIN"),
+                    public_shelf=os.getenv("PAPERFOLD_PUBLIC_SHELF") == "1") as server:
         print("Paperfold sync is listening on", server.server_address, flush=True)
         server.serve_forever()
 

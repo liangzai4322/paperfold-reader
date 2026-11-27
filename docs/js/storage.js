@@ -1,6 +1,9 @@
 const storeName = "reading";
 const lastBookKey = "last-book-id";
 const shelfPrefix = "shelf/";
+const publicBodyPrefix = "public-body/";
+const publicBodyKey = (id) => publicBodyPrefix + id;
+const publicViewKey = (archived) => archived ? "public-archive" : "public-library";
 const shelfKey = (id) => shelfPrefix + id;
 const textKey = (id) => "source/" + id;
 
@@ -17,13 +20,13 @@ function matchesOrNewer(incoming, local) {
     || (incoming.progressAt === local.progressAt && incoming.offset >= local.offset);
 }
 
-function catalogRecord(book, position, pendingUpload) {
+function catalogRecord(book, position, pendingUpload, pendingPublication) {
   return {
     id: book.id, title: book.title, format: book.format,
     bytes: new TextEncoder().encode(book.source).length,
     createdAt: book.createdAt,
     offset: position.offset || 0, fontIndex: position.fontIndex, progressAt: position.progressAt || 0,
-    cached: true, pendingUpload, pendingProgress: Boolean(position.progressAt),
+    cached: true, pendingUpload, pendingPublication, pendingProgress: Boolean(position.progressAt),
   };
 }
 
@@ -63,8 +66,8 @@ export function createBookStorage(indexedDB) {
     return transact("readwrite", (store) => store.put(value, key));
   }
 
-  function storeBook(store, book, position) {
-    store.put(catalogRecord(book, position, true), shelfKey(book.id));
+  function storeBook(store, book, position, publish = false) {
+    store.put(catalogRecord(book, position, true, publish), shelfKey(book.id));
     store.put(book.source, textKey(book.id));
     store.put(book.id, lastBookKey);
   }
@@ -110,6 +113,7 @@ export function createBookStorage(indexedDB) {
       offset: useRemote ? remote.offset : local.offset, fontIndex: local?.fontIndex,
       progressAt: useRemote ? remote.progressAt : local.progressAt,
       cached, pendingUpload: false, pendingProgress: !useRemote && local.pendingProgress,
+      published: Boolean(remote.published), archived: Boolean(remote.archived),
     }, shelfKey(remote.id));
   }
 
@@ -126,8 +130,18 @@ export function createBookStorage(indexedDB) {
         entries.onsuccess = () => finish(entries.result.sort((a, b) => b.createdAt - a.createdAt));
       });
     },
-    saveBook(book, position) {
-      return transact("readwrite", (store) => storeBook(store, book, position));
+    saveBook(book, position, publish) {
+      return transact("readwrite", (store) => storeBook(store, book, position, publish));
+    },
+    loadPublicShelf(archived) { return get(publicViewKey(archived)); },
+    savePublicShelf(archived, books) { return put(publicViewKey(archived), books); },
+    getPublicBody(id) { return get(publicBodyKey(id)); },
+    cachePublicBody(book) { return put(publicBodyKey(book.id), book.text); },
+    listPublicDownloads() {
+      return transact("readonly", (store, finish) => {
+        const keys = store.getAllKeys(IDBKeyRange.bound(publicBodyPrefix, publicBodyPrefix + "\uffff"));
+        keys.onsuccess = () => finish(keys.result.map((key) => key.slice(publicBodyPrefix.length)));
+      });
     },
     savePosition(id, position) {
       return transact("readwrite", (store) => {

@@ -195,20 +195,28 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 
 .book-list { padding: 0; margin: 12px 0 0; list-style: none; }
-.book-list li { border-block-start: 1px solid var(--edge); }
-.book-list button {
+.book-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-block-start: 1px solid var(--edge);
+}
+.book-list .book-open {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 12px;
   align-items: center;
   min-height: 55px;
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   padding: 8px 4px;
   border: 0;
   background: transparent;
   text-align: start;
 }
-.book-list button:hover { background: #2b493508; }
+.book-list .book-open:hover { background: #2b493508; }
+.book-list .book-action { flex: none; }
+.shelf-empty { margin: 12px 0 0; color: var(--muted); }
 .book-list .book-name { overflow-wrap: anywhere; font-family: var(--serif); }
 .book-list .book-progress { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
 
