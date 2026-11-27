@@ -22,32 +22,47 @@ function inline(tokens, fallback = "") {
   }).join("");
 }
 
-function readableBlocks(tokens) {
-  return tokens.map((token) => {
-    switch (token.type) {
-      case "space":
-      case "def":
-      case "hr":
-      case "checkbox":
-        return "";
-      case "code":
-        return token.text;
-      case "blockquote":
-        return readableBlocks(token.tokens);
-      case "list":
-        return token.items.map((item, index) => {
-          const marker = item.task ? (item.checked ? "☑" : "☐")
-            : token.ordered ? Number(token.start) + index + "." : "•";
-          return marker + " " + readableBlocks(item.tokens).replace(/\n/g, "\n  ");
-        }).join("\n");
-      case "table":
-        return [token.header, ...token.rows]
-          .map((row) => row.map((cell) => inline(cell.tokens, cell.text)).join(" │ "))
-          .join("\n");
-      default:
-        return inline(token.tokens, token.text ?? token.raw);
+function readableBlock(token) {
+  switch (token.type) {
+    case "space":
+    case "def":
+    case "hr":
+    case "checkbox":
+      return "";
+    case "code":
+      return token.text;
+    case "blockquote":
+      return readableBlocks(token.tokens);
+    case "list":
+      return token.items.map((item, index) => {
+        const marker = item.task ? (item.checked ? "☑" : "☐")
+          : token.ordered ? Number(token.start) + index + "." : "•";
+        return marker + " " + readableBlocks(item.tokens).replace(/\n/g, "\n  ");
+      }).join("\n");
+    case "table":
+      return [token.header, ...token.rows]
+        .map((row) => row.map((cell) => inline(cell.tokens, cell.text)).join(" │ "))
+        .join("\n");
+    default:
+      return inline(token.tokens, token.text ?? token.raw);
+  }
+}
+
+function readableBlocks(tokens, chapters) {
+  const blocks = [];
+  let length = 0;
+  for (const token of tokens) {
+    const block = readableBlock(token);
+    if (!block) continue;
+    if (blocks.length) length += 2;
+    if (chapters && token.type === "heading") {
+      const title = block.trim();
+      if (title) chapters.push({ level: token.depth, title, offset: length + block.indexOf(title) });
     }
-  }).filter(Boolean).join("\n\n");
+    blocks.push(block);
+    length += block.length;
+  }
+  return blocks.join("\n\n");
 }
 
 export function readingText(input, format = "auto") {
@@ -58,7 +73,12 @@ export function readingText(input, format = "auto") {
   try {
     const tokens = Lexer.lex(source, { gfm: true });
     if (format === "markdown" || hasFormatting(tokens)) {
-      return { source, text: readableBlocks(tokens).trim() || source, format: "markdown" };
+      const chapters = [];
+      const blocks = readableBlocks(tokens, chapters);
+      const trimmed = blocks.trimStart();
+      const leading = blocks.length - trimmed.length;
+      for (const chapter of chapters) chapter.offset -= leading;
+      return { source, text: trimmed.trimEnd() || source, format: "markdown", chapters };
     }
   } catch {
     // Keep the source readable if the document exceeds the parser's nesting limit.

@@ -181,14 +181,14 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   box-shadow: 0 14px 32px #202e2418;
 }
 
-.bookshelf-heading, .cloud-dialog header, .cloud-dialog footer {
+.bookshelf-heading, .cloud-dialog header, .cloud-dialog footer, .contents-dialog header {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 10px;
 }
 
-.bookshelf h1, .cloud-dialog h2 {
+.bookshelf h1, .cloud-dialog h2, .contents-dialog h2 {
   margin: 0;
   font-family: var(--serif);
   font-size: 1.4rem;
@@ -220,7 +220,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 .book-list .book-name { overflow-wrap: anywhere; font-family: var(--serif); }
 .book-list .book-progress { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
 
-.cloud-dialog {
+.cloud-dialog, .contents-dialog {
   width: min(480px, calc(100% - 26px));
   padding: 20px;
   border: 1px solid var(--edge);
@@ -228,7 +228,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
   color: var(--ink);
   background: var(--paper);
 }
-.cloud-dialog::backdrop { background: #142a2077; }
+.cloud-dialog::backdrop, .contents-dialog::backdrop { background: #142a2077; }
 .cloud-dialog form { display: grid; gap: 8px; }
 .cloud-dialog label { margin-top: 4px; color: var(--muted); font-size: .85rem; }
 .cloud-dialog input {
@@ -242,6 +242,35 @@ button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible
 }
 .cloud-status { min-height: 1.25em; margin: 5px 0; color: var(--muted); font-size: .85rem; }
 .cloud-dialog footer { justify-content: flex-end; }
+
+.contents-dialog {
+  max-height: min(72vh, 540px);
+  max-height: min(72dvh, 540px);
+}
+.contents-dialog[open] { display: flex; flex-direction: column; }
+.contents-list {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+.contents-list button {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  padding-inline-start: calc(8px + var(--chapter-indent) * clamp(9px, 2.8vw, 17px));
+  text-align: start;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+.contents-list button[aria-current] {
+  background: var(--control);
+  color: var(--control-accent);
+  font-weight: 650;
+}
 
 .cover {
   position: relative;

@@ -1,7 +1,7 @@
 import { createPager, normalizeText } from "./pagination.js";
 import { bindPageTurn } from "./page-turn.js?v=4";
 import { createBookStorage } from "./storage.js?v=7";
-import { readingText, titleFrom } from "./markdown.js?v=6";
+import { readingText, titleFrom } from "./markdown.js?v=7";
 import { AUTO_DOWNLOAD_BYTES, cloudAddress, createCloudClient, syncLibrary } from "./cloud.js?v=8";
 
 const byId = (id) => document.getElementById(id);
@@ -34,6 +34,9 @@ const themeChoices = [...document.querySelectorAll("[data-theme-choice]")];
 const themeColor = document.querySelector('meta[name="theme-color"]');
 const settingsToggle = byId("settings-toggle");
 const fullscreen = byId("fullscreen");
+const contentsDialog = byId("contents");
+const contentsList = byId("contents-list");
+const contentsToggle = byId("contents-toggle");
 const title = byId("book-title");
 const measure = byId("measure");
 const pageText = byId("page-text");
@@ -338,6 +341,7 @@ async function readBook(id) {
 }
 
 function setControls(open) {
+  if (!open && contentsDialog.open) contentsDialog.close();
   if (!open && controls.contains(document.activeElement)) settingsToggle.focus({ preventScroll: true });
   if (!open) setAppearancePanel(false);
   controls.hidden = !open;
@@ -347,6 +351,32 @@ function setControls(open) {
 function setAppearancePanel(open) {
   appearancePanel.hidden = !open;
   appearanceToggle.setAttribute("aria-expanded", String(open));
+}
+
+function openContents() {
+  const { chapters, page, initialOffset } = session;
+  const position = page?.start ?? initialOffset;
+  const rootLevel = chapters.reduce((level, chapter) => Math.min(level, chapter.level), 6);
+  const items = document.createDocumentFragment();
+  let current;
+  for (const [index, chapter] of chapters.entries()) {
+    const item = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "quiet";
+    button.dataset.chapter = String(index);
+    button.textContent = chapter.title;
+    button.style.setProperty("--chapter-indent", chapter.level - rootLevel);
+    if (chapter.offset <= position && (chapters[index + 1]?.offset ?? Infinity) > position) {
+      button.setAttribute("aria-current", "location");
+      current = button;
+    }
+    item.append(button);
+    items.append(item);
+  }
+  contentsList.replaceChildren(items);
+  contentsDialog.showModal();
+  if (current) current.scrollIntoView({ block: "nearest" });
 }
 
 function setFullscreen(active) {
@@ -501,8 +531,9 @@ function openReader({ book, position = defaultPosition }, persist = true, render
   rendered ??= readingText(book.source ?? book.text, book.format || "plain");
   session = {
     book: { ...book, text: rendered.text }, persist,
-    initialOffset: position.offset,
+    initialOffset: position.offset, chapters: rendered.chapters ?? [],
   };
+  contentsToggle.hidden = !session.chapters.length;
   title.textContent = book.title || titleFrom(rendered.text);
   setControls(false);
   entry.hidden = true;
@@ -724,6 +755,15 @@ tapRight.addEventListener("click", () => turnFromTap(1));
 singleMode.addEventListener("click", () => chooseTapMode("single"));
 doubleMode.addEventListener("click", () => chooseTapMode("double"));
 settingsToggle.addEventListener("click", () => setControls(controls.hidden));
+contentsToggle.addEventListener("click", openContents);
+contentsList.addEventListener("click", (event) => {
+  const choice = event.target.closest("[data-chapter]");
+  const chapter = choice && session?.chapters[Number(choice.dataset.chapter)];
+  if (!chapter) return;
+  setControls(false);
+  reflow(chapter.offset, { force: true, trackProgress: true });
+  stage.focus({ preventScroll: true });
+});
 fullscreen.addEventListener("click", () => {
   setControls(false);
   if (reader.classList.contains("is-fullscreen")) {
@@ -747,7 +787,8 @@ byId("sample").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (reader.hidden || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || turn.hasTextSelection()) return;
+  if (reader.hidden || contentsDialog.open || event.altKey || event.ctrlKey || event.metaKey
+      || event.shiftKey || turn.hasTextSelection()) return;
   if ((event.target === progress || event.target === fontChoice) && event.key !== "Escape") return;
   switch (event.key) {
     case "ArrowLeft": turn.shift(-1); break;

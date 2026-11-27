@@ -8,8 +8,8 @@
   <title>纸间</title>
   <link rel="icon" href="./icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon.png">
-  <link rel="stylesheet" href="./styles.css?v=8">
-  <script type="module" src="./js/app.js?v=8"></script>
+  <link rel="stylesheet" href="./styles.css?v=9">
+  <script type="module" src="./js/app.js?v=9"></script>
 </head>
 <body>
   <main id="entry" class="entry">
@@ -98,6 +98,7 @@
         <h1 id="book-title" class="book-title"></h1>
         <div class="reader-actions">
           <a class="quiet update-link" href="./native/update" data-native-update hidden>检查更新</a>
+          <button class="quiet" id="contents-toggle" type="button" aria-haspopup="dialog" aria-controls="contents" hidden>目录</button>
           <button class="quiet" id="fullscreen" type="button">全屏</button>
         </div>
       </header>
@@ -137,6 +138,13 @@
         <button class="arrow" id="next" type="button" aria-label="下一页" disabled><span aria-hidden="true">›</span></button>
       </nav>
     </div>
+    <dialog id="contents" class="contents-dialog" aria-labelledby="contents-title">
+      <header>
+        <h2 id="contents-title">目录</h2>
+        <form method="dialog"><button class="quiet" type="submit" autofocus>关闭</button></form>
+      </header>
+      <ol class="contents-list" id="contents-list"></ol>
+    </dialog>
     <p class="reader-note" id="reader-note" role="status" hidden></p>
   </main>
 </body>
