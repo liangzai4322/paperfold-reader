@@ -50,10 +50,12 @@ function polygon(points) {
 
 export function bindPageTurn(stage, { front, reverse, shadow, preview, commit }) {
   const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)");
+  const dragThreshold = 9;
   let pointer = null;
   let turn = null;
   let frame = 0;
   let pendingMotion = null;
+  let suppressClick = false;
 
   function clear() {
     cancelAnimationFrame(frame);
@@ -132,7 +134,9 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
   }
 
   function onDown(event) {
-    if (turn || !event.isPrimary || event.button !== 0) return;
+    if (!event.isPrimary || event.button !== 0) return;
+    suppressClick = turn !== null;
+    if (turn) return;
     const box = stage.getBoundingClientRect();
     pointer = {
       id: event.pointerId, box, x: event.clientX, y: event.clientY,
@@ -144,9 +148,10 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
     if (pointer?.id !== event.pointerId) return;
     const dx = event.clientX - pointer.x;
     const dy = event.clientY - pointer.y;
+    if (Math.hypot(dx, dy) >= dragThreshold) suppressClick = true;
     const { box } = pointer;
     if (!pointer.direction) {
-      if (Math.abs(dx) < 9 || Math.abs(dx) < Math.abs(dy) * 0.85) return;
+      if (Math.abs(dx) < dragThreshold || Math.abs(dx) < Math.abs(dy) * 0.85) return;
       const direction = dx < 0 ? 1 : -1;
       const y = pointer.y - box.top;
       const edgeY = y < box.height * 0.28 ? 0 : y > box.height * 0.72 ? box.height : y;
@@ -173,6 +178,9 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
     const gesture = pointer;
     pointer = null;
     if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+    if (cancelled || Math.hypot(gesture.x - event.clientX, gesture.y - event.clientY) >= dragThreshold) {
+      suppressClick = true;
+    }
     if (!gesture.direction) return;
     const travelled = (gesture.x - event.clientX) * gesture.direction;
     const quickSwipe = travelled >= 32 && performance.now() - gesture.downAt < 240;
@@ -185,6 +193,10 @@ export function bindPageTurn(stage, { front, reverse, shadow, preview, commit })
   stage.addEventListener("pointermove", onMove);
   stage.addEventListener("pointerup", (event) => onUp(event, false));
   stage.addEventListener("pointercancel", (event) => onUp(event, true));
+  stage.addEventListener("click", (event) => {
+    // Touch browsers can synthesize a click after a drag or an aborted turn.
+    if (suppressClick && event.detail > 0) event.stopPropagation();
+  }, true);
 
   return { shift, clear };
 }

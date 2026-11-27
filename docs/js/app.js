@@ -1,5 +1,5 @@
 import { createPager, normalizeText } from "./pagination.js";
-import { bindPageTurn } from "./page-turn.js";
+import { bindPageTurn } from "./page-turn.js?v=2";
 import { createBookStorage } from "./storage.js";
 
 const byId = (id) => document.getElementById(id);
@@ -8,6 +8,9 @@ const reader = byId("reader");
 const field = byId("manuscript");
 const resume = byId("resume");
 const stage = byId("paper");
+const controls = byId("reader-controls");
+const settingsToggle = byId("settings-toggle");
+const fullscreen = byId("fullscreen");
 const title = byId("book-title");
 const measure = byId("measure");
 const pageText = byId("page-text");
@@ -16,6 +19,8 @@ const smaller = byId("smaller");
 const larger = byId("larger");
 const previous = byId("previous");
 const next = byId("next");
+const tapPrevious = byId("tap-previous");
+const tapNext = byId("tap-next");
 const progress = byId("progress");
 const percentage = byId("position-label");
 const readerNote = byId("reader-note");
@@ -48,6 +53,26 @@ function storageFailed() {
   readerNote.hidden = false;
 }
 
+function setControls(open) {
+  if (!open && controls.contains(document.activeElement)) settingsToggle.focus({ preventScroll: true });
+  controls.hidden = !open;
+  settingsToggle.setAttribute("aria-expanded", String(open));
+}
+
+function setFullscreen(active) {
+  reader.classList.toggle("is-fullscreen", active);
+  fullscreen.textContent = active ? "退出全屏" : "全屏";
+  scheduleReflow();
+}
+
+function leaveFullscreen() {
+  if (document.fullscreenElement === document.documentElement) {
+    document.exitFullscreen().catch(() => {});
+  } else {
+    setFullscreen(false);
+  }
+}
+
 function warmNextPage() {
   cancelWarmup();
   const { pager, page } = session;
@@ -76,6 +101,8 @@ function showPage(page) {
   const tenths = last ? 1000 : Math.min(999, Math.floor(1000 * page.start / book.text.length));
   previous.disabled = page.start === 0;
   next.disabled = last;
+  tapPrevious.setAttribute("aria-disabled", String(previous.disabled));
+  tapNext.setAttribute("aria-disabled", String(next.disabled));
   progress.disabled = page.start === 0 && last;
   progress.value = String(tenths);
   displayProgress(tenths);
@@ -129,6 +156,7 @@ function openReader({ book, position = defaultPosition }, persist = true) {
     fontIndex: fontSizes[position.fontIndex] ? position.fontIndex : defaultPosition.fontIndex,
   };
   title.textContent = book.text.slice(0, 300).trimStart().split("\n", 1)[0] || "长文";
+  setControls(false);
   entry.hidden = true;
   reader.hidden = false;
   stage.setAttribute("aria-busy", "true");
@@ -141,6 +169,7 @@ function openReader({ book, position = defaultPosition }, persist = true) {
 function openEditor() {
   turn.clear();
   cancelWarmup();
+  leaveFullscreen();
   session = undefined;
   pageText.textContent = "";
   previewText.textContent = "";
@@ -197,6 +226,33 @@ smaller.addEventListener("click", () => changeFont(-1));
 larger.addEventListener("click", () => changeFont(1));
 previous.addEventListener("click", () => turn.shift(-1));
 next.addEventListener("click", () => turn.shift(1));
+tapPrevious.addEventListener("click", () => {
+  if (previous.disabled) return;
+  setControls(false);
+  turn.shift(-1);
+});
+tapNext.addEventListener("click", () => {
+  if (next.disabled) return;
+  setControls(false);
+  turn.shift(1);
+});
+settingsToggle.addEventListener("click", () => setControls(controls.hidden));
+fullscreen.addEventListener("click", () => {
+  setControls(false);
+  if (reader.classList.contains("is-fullscreen")) {
+    leaveFullscreen();
+    return;
+  }
+  setFullscreen(true);
+  if (document.fullscreenEnabled && document.documentElement.requestFullscreen) {
+    document.documentElement.requestFullscreen().catch(() => {});
+  }
+});
+document.addEventListener("fullscreenchange", () => {
+  const active = document.fullscreenElement === document.documentElement;
+  if (active && reader.hidden) leaveFullscreen();
+  else setFullscreen(active);
+});
 progress.addEventListener("input", () => displayProgress(Number(progress.value)));
 progress.addEventListener("change", () => seek(Number(progress.value)));
 byId("sample").addEventListener("click", () => {
@@ -204,19 +260,29 @@ byId("sample").addEventListener("click", () => {
 });
 
 document.addEventListener("keydown", (event) => {
-  if (reader.hidden || event.target === progress || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (reader.hidden || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (event.target === progress && event.key !== "Escape") return;
   switch (event.key) {
     case "ArrowLeft": turn.shift(-1); break;
     case "ArrowRight": turn.shift(1); break;
     case "Home": seek(0); break;
     case "End": seek(1000); break;
+    case "Enter":
+      if (event.target !== stage) return;
+      setControls(controls.hidden);
+      break;
+    case "Escape":
+      if (!controls.hidden) setControls(false);
+      else if (reader.classList.contains("is-fullscreen")) leaveFullscreen();
+      else return;
+      break;
     default: return;
   }
   event.preventDefault();
 });
 
 const layoutObserver = new ResizeObserver(scheduleReflow);
-layoutObserver.observe(stage);
+layoutObserver.observe(measure);
 
 storage.load().then((record) => {
   if (!record || saved) return;

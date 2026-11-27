@@ -8,8 +8,8 @@
   <title>纸间</title>
   <link rel="icon" href="./icon.png" type="image/png">
   <link rel="apple-touch-icon" href="./icon.png">
-  <link rel="stylesheet" href="./styles.css">
-  <script type="module" src="./js/app.js"></script>
+  <link rel="stylesheet" href="./styles.css?v=2">
+  <script type="module" src="./js/app.js?v=2"></script>
 </head>
 <body>
   <main id="entry" class="entry">
@@ -32,31 +32,38 @@
   </main>
 
   <main id="reader" class="reader" hidden>
-    <header class="reader-bar">
-      <button class="quiet edit-link" id="back" type="button"><span aria-hidden="true">‹</span> 换一篇</button>
-      <h1 id="book-title" class="book-title"></h1>
-      <div class="type-tools" role="group" aria-label="正文字号">
-        <button class="quiet" id="smaller" type="button" aria-label="减小字号">A−</button>
-        <button class="quiet" id="larger" type="button" aria-label="增大字号">A+</button>
-      </div>
-    </header>
-
     <div id="paper" class="paper" role="region" aria-label="书页" aria-busy="true" tabindex="0">
       <div class="leaf leaf-under" aria-hidden="true"><div class="page-copy" id="preview-text"></div></div>
       <div class="shadow" id="fold-shadow" aria-hidden="true"></div>
       <article class="leaf leaf-front" id="front" aria-label="当前页"><div class="page-copy" id="page-text"></div></article>
       <div class="leaf leaf-reverse" id="reverse" aria-hidden="true"></div>
       <div class="page-copy measure" id="measure" aria-hidden="true"></div>
+      <div class="tap-zones">
+        <button id="tap-previous" type="button" aria-label="上一页" aria-disabled="true"></button>
+        <button id="settings-toggle" type="button" aria-label="阅读设置" aria-controls="reader-controls" aria-expanded="false"></button>
+        <button id="tap-next" type="button" aria-label="下一页" aria-disabled="true"></button>
+      </div>
     </div>
 
-    <nav class="navigation" aria-label="翻页">
-      <button class="arrow" id="previous" type="button" aria-label="上一页" disabled><span aria-hidden="true">‹</span></button>
-      <div class="position">
-        <output id="position-label" for="progress">0%</output>
-        <input id="progress" type="range" min="0" max="1000" value="0" aria-label="阅读位置" disabled>
-      </div>
-      <button class="arrow" id="next" type="button" aria-label="下一页" disabled><span aria-hidden="true">›</span></button>
-    </nav>
+    <div id="reader-controls" class="reader-controls" hidden>
+      <header class="reader-bar">
+        <button class="quiet edit-link" id="back" type="button"><span aria-hidden="true">‹</span> 换一篇</button>
+        <h1 id="book-title" class="book-title"></h1>
+        <button class="quiet" id="fullscreen" type="button">全屏</button>
+      </header>
+      <nav class="navigation" aria-label="阅读工具">
+        <button class="arrow" id="previous" type="button" aria-label="上一页" disabled><span aria-hidden="true">‹</span></button>
+        <div class="position">
+          <output id="position-label" for="progress">0%</output>
+          <input id="progress" type="range" min="0" max="1000" value="0" aria-label="阅读位置" disabled>
+        </div>
+        <div class="type-tools" role="group" aria-label="正文字号">
+          <button class="quiet" id="smaller" type="button" aria-label="减小字号">A−</button>
+          <button class="quiet" id="larger" type="button" aria-label="增大字号">A+</button>
+        </div>
+        <button class="arrow" id="next" type="button" aria-label="下一页" disabled><span aria-hidden="true">›</span></button>
+      </nav>
+    </div>
     <p class="reader-note" id="reader-note" role="status" hidden></p>
   </main>
 </body>
